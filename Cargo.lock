@@ -49,6 +49,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "cadmpeg-codec-step"
+version = "0.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "059a4900d8585f2bb16fcc51dd45db5eacae7aa368e6910232786e40c0ea24ae"
+dependencies = [
+ "base64",
+ "cadmpeg-container",
+ "cadmpeg-core",
+ "cadmpeg-ir",
+ "encoding_rs",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "cadmpeg-container"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -147,6 +162,15 @@ dependencies = [
  "block-buffer",
  "const-oid",
  "crypto-common",
+]
+
+[[package]]
+name = "encoding_rs"
+version = "0.8.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
+dependencies = [
+ "cfg-if",
 ]
 
 [[package]]
@@ -309,6 +333,7 @@ name = "rhino3dm-rs"
 version = "0.1.0"
 dependencies = [
  "cadmpeg-codec-rhino",
+ "cadmpeg-codec-step",
  "cadmpeg-ir",
  "serde",
  "serde_json",

@@ -6,9 +6,10 @@
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
 </p>
 
-`rhino3dm-rs` is a source-read-only foundation for inspecting native Rhino
-`.3dm` archives without Rhino, OpenNURBS, CPython, WebAssembly, or FFI. It
-indexes archive structure, decodes selected typed records, and reports losses
+`rhino3dm-rs` is a pure-Rust foundation for inspecting native Rhino `.3dm`
+archives and admitting exact engineering STEP-to-Rhino B-rep transfer without
+Rhino, OpenNURBS, CPython, WebAssembly, or FFI. It indexes archive structure,
+projects recovered semantic data for render planning, and reports losses
 explicitly instead of presenting incomplete geometry as a successful decode.
 
 > **Early-stage API:** archive framing and the typed records below are usable;
@@ -31,12 +32,15 @@ matter more than pretending every file was decoded completely.
 | Points | Typed decode implemented |
 | Instance references and 4×4 transforms | Typed decode implemented |
 | v6+ instance definitions and ordered member UUIDs | Typed decode implemented |
+| Renderer-facing semantic document (layers, IDs, user strings, blocks, PBR scalar/mapping records) | Implemented with explicit PBR gaps |
+| Exact STEP → Rhino B-rep/NURBS admission path | Implemented, strict and atomic; no mesh fallback |
+| STEP assemblies with Rhino block definition/occurrence export | Not yet supported; intentionally refused |
 | Curves, meshes, Breps, and extrusions | Classified; native typed decode incomplete |
 | Rhino PBR materials and shader parameters | Not decoded; retained source data is not parity |
 | Texture files, embedded bytes, and content hashes | Not exposed |
 | Mesh UV channels and texture mapping transforms | Not exposed by the public API |
 | Geometry census through the Rust `cadmpeg` bridge | Available as an explicit loss report |
-| Writing or mutating 3DM files | Not supported |
+| General 3DM writing or mutation | Not supported; exact STEP import is the current narrow write path |
 
 Unsupported or malformed structures return an error or carry a per-record
 diagnostic. Callers that require complete geometry must check the admission
@@ -105,6 +109,40 @@ The same rule applies to appearance. A renderer must not substitute a gray
 material or discard textures silently. See
 [`docs/pbr-material-parity.md`](docs/pbr-material-parity.md) for the required
 material, texture, UV, and render-reconstruction gate.
+
+## Engineering STEP → Rhino
+
+The `step` module transfers ISO 10303-21 engineering geometry as native
+B-rep/NURBS only. It rejects losses in geometry, topology, dimensional units,
+or product structure and writes the output atomically:
+
+```rust
+use rhino3dm_rs::step::{import_exact_step, ExactStepOptions};
+
+let report = import_exact_step("part.step", "part.3dm", ExactStepOptions::default())?;
+println!("{} exact B-rep bodies", report.source_bodies);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+There is no mesh fallback. See [`docs/engineering-step.md`](docs/engineering-step.md)
+for solid/manifold admission and the current block-assembly boundary.
+
+## Renderer-facing scene model
+
+`scene::SceneDocument` exposes document layers, source UUIDs, names, object
+attributes, user strings, legacy/PBR material scalars, texture UVW transforms,
+block definitions, instance occurrences, and an exact B-rep/NURBS census. Its
+Three.js manifest intentionally preserves Rhino Z-up/document units and keeps
+Rhino UUIDs in source metadata rather than replacing Three.js runtime UUIDs.
+
+```rust
+let scene = rhino3dm_rs::scene::SceneDocument::read("model.3dm")?;
+let manifest = scene.threejs_manifest();
+if !manifest.required_capabilities.complete_pbr_reconstruction() {
+    // Strict textured-PBR rendering is not yet admissible.
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
 
 ## Design principles
 

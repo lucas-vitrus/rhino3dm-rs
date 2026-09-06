@@ -11,6 +11,9 @@ use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::path::Path;
 
+pub mod scene;
+pub mod step;
+
 pub const FILE_SIGNATURE: &[u8; 24] = b"3D Geometry File Format ";
 const HEADER_LENGTH: usize = 32;
 const TCODE_SHORT: u32 = 0x8000_0000;
