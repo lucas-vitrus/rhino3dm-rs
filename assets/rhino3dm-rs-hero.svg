@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="480" viewBox="0 0 1280 480" role="img" aria-labelledby="title desc">
+  <title id="title">rhino3dm-rs</title>
+  <desc id="desc">A technical wireframe rhinoceros emerging from a native 3DM archive into Rust geometry.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#08131f"/><stop offset=".58" stop-color="#102637"/><stop offset="1" stop-color="#182b2e"/></linearGradient>
+    <radialGradient id="glow" cx="62%" cy="45%" r="55%"><stop offset="0" stop-color="#57f2c3" stop-opacity=".18"/><stop offset="1" stop-color="#57f2c3" stop-opacity="0"/></radialGradient>
+    <linearGradient id="rust" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ff8a4c"/><stop offset="1" stop-color="#ffb36b"/></linearGradient>
+    <filter id="soft"><feGaussianBlur stdDeviation="18"/></filter>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#8cc9c3" stroke-opacity=".07"/></pattern>
+  </defs>
+  <rect width="1280" height="480" rx="28" fill="url(#bg)"/><rect width="1280" height="480" rx="28" fill="url(#grid)"/><rect width="1280" height="480" rx="28" fill="url(#glow)"/>
+  <circle cx="955" cy="236" r="154" fill="#3bf0bd" opacity=".07" filter="url(#soft)"/>
+  <g transform="translate(80 82)">
+    <rect width="148" height="42" rx="21" fill="#57f2c3" fill-opacity=".12" stroke="#57f2c3" stroke-opacity=".5"/>
+    <text x="74" y="27" text-anchor="middle" fill="#8ff9d8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16" font-weight="700">PURE RUST</text>
+    <text y="130" fill="#f4fbfa" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="66" font-weight="760" letter-spacing="-3">rhino3dm<tspan fill="url(#rust)">-rs</tspan></text>
+    <text x="2" y="178" fill="#a9c4c5" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="24">Native 3DM archives. Explicit losses. No FFI.</text>
+    <g transform="translate(0 228)" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15">
+      <rect width="370" height="70" rx="12" fill="#061019" stroke="#5ba9a3" stroke-opacity=".3"/><circle cx="24" cy="22" r="4" fill="#57f2c3"/>
+      <text x="40" y="27" fill="#c8e3df">File3dm::read("design.3dm")</text><path d="M24 39v12h14" fill="none" stroke="#ff9a5e" stroke-width="2"/><text x="48" y="56" fill="#ffad75">archive → tables → typed records</text>
+    </g>
+  </g>
+  <g transform="translate(620 70) scale(.88)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M98 249 60 226 51 184 73 144 125 113 186 100 245 107 302 137 341 170 373 177 395 201 378 222 344 224 320 247 277 260 243 279 206 278 171 261 128 263Z" fill="#0b1b25" stroke="#7df5d3" stroke-width="2.2"/>
+    <path d="m340 170 27-29 45-16-20 38 37 8-34 30M125 113l-17-37 33 29 26-48 3 44M73 144l-39 3 29 19-34 17 28 9M128 263l-5 60 31 3 19-65M243 279l10 49 31-1-7-67" stroke="#7df5d3" stroke-width="2.2"/>
+    <path d="m74 144 54 119m-3-150 118 166m-57-179 91 160m-32-153-74 154m131-124-96 141m135-108-98 109m135-57-101 38M60 226l111 35m-120-77 155 94m-98-202 235 148M170 101l150 146m-75-140-2 172m59-142-25 123" stroke="#4e9d96" stroke-opacity=".48" stroke-width="1.1"/>
+    <circle cx="353" cy="190" r="5" fill="#ff9a5e" stroke="none"/><path d="m412 125 33-21 24 8-19 13 26 10-43 3Z" fill="#ff9a5e" fill-opacity=".2" stroke="#ff9a5e" stroke-width="2"/>
+    <g fill="#57f2c3" stroke="none"><circle cx="73" cy="144" r="3"/><circle cx="125" cy="113" r="3"/><circle cx="186" cy="100" r="3"/><circle cx="245" cy="107" r="3"/><circle cx="302" cy="137" r="3"/><circle cx="341" cy="170" r="3"/><circle cx="395" cy="201" r="3"/><circle cx="344" cy="224" r="3"/><circle cx="277" cy="260" r="3"/><circle cx="243" cy="279" r="3"/><circle cx="171" cy="261" r="3"/><circle cx="98" cy="249" r="3"/></g>
+  </g>
+  <path d="M31 444h1218" stroke="#7df5d3" stroke-opacity=".18"/><text x="80" y="450" fill="#719394" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13">SOURCE-READ-ONLY • PROVENANCE-PRESERVING • FAIL-CLOSED</text>
+</svg>

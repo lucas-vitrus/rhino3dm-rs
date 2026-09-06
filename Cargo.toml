@@ -1,0 +1,21 @@
+[package]
+name = "rhino3dm-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Fail-closed, pure-Rust reader for native Rhino 3DM archives"
+license = "MIT"
+repository = "https://github.com/lucas-vitrus/rhino3dm-rs"
+homepage = "https://github.com/lucas-vitrus/rhino3dm-rs"
+documentation = "https://docs.rs/rhino3dm-rs"
+readme = "README.md"
+keywords = ["rhino", "3dm", "cad", "opennurbs"]
+categories = ["parser-implementations", "graphics"]
+
+[lib]
+name = "rhino3dm_rs"
+path = "src/lib.rs"
+
+[dependencies]
+cadmpeg-codec-rhino = "0.5.5"
+cadmpeg-ir = "0.5.5"
+serde_json = "1"
