@@ -128,6 +128,29 @@ pub struct File3dm {
     archive: ArchiveIndex,
 }
 
+/// Machine-readable coverage gates for consumers that require more than the
+/// currently supported structural archive API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecoderCapabilities {
+    pub pbr_materials: bool,
+    pub embedded_texture_bytes: bool,
+    pub mesh_uv_channels: bool,
+    pub texture_mapping_transforms: bool,
+    pub per_face_materials: bool,
+}
+
+impl DecoderCapabilities {
+    /// True only when a consumer can reconstruct textured PBR appearance
+    /// without silent defaults or omitted source data.
+    pub fn complete_pbr_reconstruction(self) -> bool {
+        self.pbr_materials
+            && self.embedded_texture_bytes
+            && self.mesh_uv_channels
+            && self.texture_mapping_transforms
+            && self.per_face_materials
+    }
+}
+
 /// Geometry recovered by the current pure-Rust geometry backend.
 ///
 /// This is intentionally a report, not a fabricated native mesh API: callers
@@ -156,6 +179,20 @@ impl GeometryProbe {
 }
 
 impl File3dm {
+    /// Coverage of the current public decoder API.
+    ///
+    /// These flags are deliberately conservative. Opaque preservation inside
+    /// a backend does not count as decoded, reconstructable data.
+    pub const fn capabilities() -> DecoderCapabilities {
+        DecoderCapabilities {
+            pbr_materials: false,
+            embedded_texture_bytes: false,
+            mesh_uv_channels: false,
+            texture_mapping_transforms: false,
+            per_face_materials: false,
+        }
+    }
+
     /// Read and structurally index a native 3DM file without modifying it.
     pub fn read(path: impl AsRef<Path>) -> Result<Self, Error> {
         let bytes = fs::read(path)?;
@@ -1385,4 +1422,14 @@ mod tests {
         probe.warnings.push("Error: unreadable mesh".to_owned());
         assert!(!probe.complete_object_decode());
     }
+}
+#[test]
+fn pbr_reconstruction_stays_fail_closed_until_all_channels_are_public() {
+    let capabilities = File3dm::capabilities();
+    assert!(!capabilities.complete_pbr_reconstruction());
+    assert!(!capabilities.pbr_materials);
+    assert!(!capabilities.embedded_texture_bytes);
+    assert!(!capabilities.mesh_uv_channels);
+    assert!(!capabilities.texture_mapping_transforms);
+    assert!(!capabilities.per_face_materials);
 }

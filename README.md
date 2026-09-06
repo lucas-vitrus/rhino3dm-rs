@@ -3,7 +3,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/lucas-vitrus/rhino3dm-rs/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/lucas-vitrus/rhino3dm-rs/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
 </p>
 
@@ -33,6 +32,9 @@ matter more than pretending every file was decoded completely.
 | Instance references and 4×4 transforms | Typed decode implemented |
 | v6+ instance definitions and ordered member UUIDs | Typed decode implemented |
 | Curves, meshes, Breps, and extrusions | Classified; native typed decode incomplete |
+| Rhino PBR materials and shader parameters | Not decoded; retained source data is not parity |
+| Texture files, embedded bytes, and content hashes | Not exposed |
+| Mesh UV channels and texture mapping transforms | Not exposed by the public API |
 | Geometry census through the Rust `cadmpeg` bridge | Available as an explicit loss report |
 | Writing or mutating 3DM files | Not supported |
 
@@ -99,6 +101,11 @@ if !probe.complete_object_decode() {
 This is intentionally a gate, not a claim that all geometry has a stable
 native `rhino3dm-rs` representation.
 
+The same rule applies to appearance. A renderer must not substitute a gray
+material or discard textures silently. See
+[`docs/pbr-material-parity.md`](docs/pbr-material-parity.md) for the required
+material, texture, UV, and render-reconstruction gate.
+
 ## Design principles
 
 - Read-only by default: source files are never rewritten.
@@ -115,9 +122,39 @@ cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
 ```
 
-CI runs the same checks on Linux, macOS, and Windows. Contributions should add
-a compact redistributable fixture or construct one in the test when extending
-the decoder. Do not commit proprietary production `.3dm` files.
+Contributions should add a compact redistributable fixture or construct one in
+the test when extending the decoder. Do not commit proprietary production
+`.3dm` files.
+
+## Benchmark
+
+The repository includes a redistributable 3DM fixture and a benchmark comparing
+the same structural-inspection result contract in Rust and Python. It measures
+archive loading plus traversal of objects, attributes, user strings, and
+instance definitions. It is not a full geometry-parity benchmark: the Python
+package exposes substantially more geometry and document APIs today.
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r benchmarks/requirements.txt
+.venv/bin/python fixtures/generate_benchmark_fixture.py
+cargo build --release --bin rhino3dm-bench
+.venv/bin/python benchmarks/compare.py --iterations 30 --warmups 5
+```
+
+The comparison script writes the raw samples and environment metadata to
+`benchmarks/results/`.
+
+Current Apple Silicon baseline (30 measured iterations after 5 warmups):
+
+| Runtime | Median | Mean | p95 |
+| --- | ---: | ---: | ---: |
+| `rhino3dm-rs` | 2.30 ms | 2.44 ms | 3.12 ms |
+| Python `rhino3dm` 8.17.0 | 32.90 ms | 32.91 ms | 34.24 ms |
+
+The Rust median was 14.3× faster for this structural subset. See the
+[raw result](benchmarks/results/latest.json). This must not be interpreted as
+full API, geometry, or PBR-material parity.
 
 ## Roadmap
 

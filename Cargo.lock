@@ -310,6 +310,7 @@ version = "0.1.0"
 dependencies = [
  "cadmpeg-codec-rhino",
  "cadmpeg-ir",
+ "serde",
  "serde_json",
 ]
 
