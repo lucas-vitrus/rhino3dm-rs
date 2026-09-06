@@ -1157,8 +1157,10 @@ fn read_utf16(bytes: &[u8], offset: &mut usize, end: usize) -> Result<String, Er
         return Ok(String::new());
     }
     let words: Vec<u16> = raw
-        .chunks_exact(2)
-        .map(|word| u16::from_le_bytes(word.try_into().unwrap()))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|word| u16::from_le_bytes(*word))
         .collect();
     if words.last() != Some(&0) {
         return Err(Error::Unsupported {
