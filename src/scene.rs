@@ -7,7 +7,10 @@
 //! faithfully rendered until its capability gate passes.
 
 use cadmpeg_codec_rhino::RhinoCodec;
-use cadmpeg_ir::{Codec, DecodeOptions};
+use cadmpeg_ir::{
+    tessellation::{Tessellation, TessellationChannelDomain},
+    Codec, DecodeOptions,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -29,6 +32,9 @@ pub struct SceneDocument {
     pub materials: Vec<Material>,
     /// Document textures and their mapping data as referenced by materials.
     pub textures: Vec<Texture>,
+    /// Embedded-image and legacy bitmap descriptors. A descriptor proves that
+    /// the source has an asset but does *not* expose image bytes yet.
+    pub texture_assets: Vec<TextureAsset>,
     /// Object-level names, UUIDs, attributes, and user strings.
     pub objects: Vec<SceneObject>,
     /// Reusable Rhino block definitions.
@@ -120,6 +126,68 @@ pub struct Texture {
     pub source: Value,
 }
 
+/// A source image record referenced by a 3DM material or texture mapping.
+///
+/// `byte_len` and `sha256` describe the source payload without pretending the
+/// payload itself is available to the public API.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TextureAsset {
+    pub id: String,
+    pub source_id: Option<RhinoId>,
+    pub name: String,
+    pub path: String,
+    pub byte_len: u64,
+    pub sha256: String,
+    pub source: Value,
+}
+
+/// An indexed display mesh retained independently from exact B-rep/NURBS.
+///
+/// This is renderer input decoded from the 3DM's own display/facet stream. It
+/// is never used as a STEP import fallback or as the engineering source model.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RenderMesh {
+    pub vertices: Vec<[f64; 3]>,
+    pub triangles: Vec<[u32; 3]>,
+    pub feature_edges: Vec<[u32; 2]>,
+    pub normals: Vec<[f64; 3]>,
+    pub corner_normals: Vec<[f64; 3]>,
+    pub texture_assignments: Vec<MeshTextureAssignment>,
+    pub channels: Vec<MeshChannel>,
+}
+
+/// A texture resource assigned to a subset of indexed mesh triangles.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MeshTextureAssignment {
+    pub source_id: Option<String>,
+    pub texture_id: String,
+    pub triangles: Vec<u32>,
+}
+
+/// A source-defined mesh channel such as UV or vertex color data.
+///
+/// Channel payload bytes are exact decoder output. `kind` remains a native
+/// numeric tag until Rhino's tag vocabulary is fully stabilized in this API.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MeshChannel {
+    pub domain: MeshChannelDomain,
+    pub kind: u32,
+    pub flags: u32,
+    pub item_size: u32,
+    pub count: u32,
+    pub data: Vec<u8>,
+    pub indices: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MeshChannelDomain {
+    Vertex,
+    Corner,
+    Triangle,
+    Unknown,
+}
+
 /// Object attributes needed for visibility, grouping, styling, and lookup.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SceneObject {
@@ -145,10 +213,11 @@ pub enum SceneGeometry {
     Point {
         position: [f64; 3],
     },
-    RenderMesh {
-        vertices: usize,
-        triangles: usize,
-        texture_channels: usize,
+    /// One object can carry multiple source display meshes (for example, a
+    /// per-face B-rep cache). Keep all of them; collapsing to one would lose
+    /// geometry and per-face material association.
+    RenderMeshes {
+        meshes: Vec<RenderMesh>,
     },
     InstanceReference {
         definition_id: RhinoId,
@@ -288,6 +357,11 @@ impl SceneDocument {
             .iter()
             .flat_map(|material| material.textures.clone())
             .collect();
+        let texture_assets = records(arenas, "embedded_images")
+            .iter()
+            .chain(records(arenas, "windows_bitmaps"))
+            .map(parse_texture_asset)
+            .collect::<Result<Vec<_>, _>>()?;
         let definitions = records(arenas, "product_definitions")
             .iter()
             .map(parse_definition)
@@ -298,9 +372,8 @@ impl SceneDocument {
             .collect::<Result<Vec<_>, _>>()?;
         let presentations = records(arenas, "object_presentation");
         let points = records(model, "points");
-        let meshes = records(model, "tessellations");
         let point_positions = positions_by_source_object(points);
-        let mesh_summaries = mesh_summaries_by_source_object(meshes);
+        let mesh_data = meshes_by_source_object(&decoded.ir().model.tessellations);
         let occurrence_definitions = occurrences
             .iter()
             .map(|occurrence| (occurrence.id.0.clone(), occurrence.definition_id.clone()))
@@ -323,7 +396,7 @@ impl SceneDocument {
                 parse_object(
                     record,
                     &point_positions,
-                    &mesh_summaries,
+                    &mesh_data,
                     &occurrence_definitions,
                     &archive_geometry,
                 )
@@ -348,6 +421,7 @@ impl SceneDocument {
             layers,
             materials,
             textures,
+            texture_assets,
             objects,
             definitions,
             occurrences,
@@ -378,8 +452,8 @@ impl SceneDocument {
             pbr_scalars: true,
             texture_mapping_transforms: true,
             embedded_texture_bytes: false,
-            mesh_uv_channels: false,
-            per_face_materials: false,
+            mesh_uv_channels: true,
+            per_face_materials: true,
         }
     }
 
@@ -623,6 +697,35 @@ fn parse_texture(record: &Value) -> Result<Texture, SceneError> {
     })
 }
 
+fn parse_texture_asset(record: &Value) -> Result<TextureAsset, SceneError> {
+    let id = required_string(record, "id")?;
+    let is_embedded_image = record.get("buffer_byte_len").is_some();
+    Ok(TextureAsset {
+        id,
+        source_id: optional_string(record, "source_uuid").map(RhinoId),
+        name: optional_string(record, "name").unwrap_or_default(),
+        path: optional_string(record, "file_path").unwrap_or_default(),
+        byte_len: record
+            .get(if is_embedded_image {
+                "buffer_byte_len"
+            } else {
+                "pixel_buffer_byte_len"
+            })
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        sha256: optional_string(
+            record,
+            if is_embedded_image {
+                "buffer_sha256"
+            } else {
+                "pixel_buffer_sha256"
+            },
+        )
+        .unwrap_or_default(),
+        source: record.clone(),
+    })
+}
+
 fn parse_definition(record: &Value) -> Result<InstanceDefinition, SceneError> {
     Ok(InstanceDefinition {
         id: RhinoId(required_string(record, "source_uuid")?),
@@ -681,30 +784,65 @@ fn positions_by_source_object(records: &[Value]) -> BTreeMap<String, [f64; 3]> {
         .collect()
 }
 
-fn mesh_summaries_by_source_object(records: &[Value]) -> BTreeMap<String, (usize, usize, usize)> {
+fn meshes_by_source_object(records: &[Tessellation]) -> BTreeMap<String, Vec<RenderMesh>> {
     records
         .iter()
         .filter_map(|record| {
-            let id = record.get("source_object")?.get("object_id")?.as_str()?;
-            Some((
-                id.to_owned(),
-                (
-                    record.get("vertices")?.as_array()?.len(),
-                    record.get("triangles")?.as_array()?.len(),
-                    record
-                        .get("channels")
-                        .and_then(Value::as_array)
-                        .map_or(0, Vec::len),
-                ),
-            ))
+            let id = record.source_object.as_ref()?.object_id.clone();
+            Some((id, render_mesh(record)))
         })
-        .collect()
+        .fold(BTreeMap::new(), |mut by_source_object, (id, mesh)| {
+            by_source_object.entry(id).or_default().push(mesh);
+            by_source_object
+        })
+}
+
+fn render_mesh(record: &Tessellation) -> RenderMesh {
+    RenderMesh {
+        vertices: record.vertices.iter().copied().map(Into::into).collect(),
+        triangles: record.triangles.clone(),
+        feature_edges: record.feature_edges.clone(),
+        normals: record.normals.iter().copied().map(Into::into).collect(),
+        corner_normals: record
+            .corner_normals
+            .iter()
+            .copied()
+            .map(Into::into)
+            .collect(),
+        texture_assignments: record
+            .texture_assignments
+            .iter()
+            .map(|assignment| MeshTextureAssignment {
+                source_id: assignment.source_id.clone(),
+                texture_id: assignment.texture.0.clone(),
+                triangles: assignment.triangles.clone(),
+            })
+            .collect(),
+        channels: record
+            .channels
+            .iter()
+            .map(|channel| MeshChannel {
+                domain: match channel.domain {
+                    TessellationChannelDomain::Vertex => MeshChannelDomain::Vertex,
+                    TessellationChannelDomain::Corner => MeshChannelDomain::Corner,
+                    TessellationChannelDomain::Triangle => MeshChannelDomain::Triangle,
+                    _ => MeshChannelDomain::Unknown,
+                },
+                kind: channel.kind,
+                flags: channel.flags,
+                item_size: channel.item_size,
+                count: channel.count,
+                data: channel.data.clone(),
+                indices: channel.indices.clone(),
+            })
+            .collect(),
+    }
 }
 
 fn parse_object(
     record: &Value,
     points: &BTreeMap<String, [f64; 3]>,
-    meshes: &BTreeMap<String, (usize, usize, usize)>,
+    meshes: &BTreeMap<String, Vec<RenderMesh>>,
     occurrences: &BTreeMap<String, RhinoId>,
     archive_geometry: &BTreeMap<String, crate::GeometryKind>,
 ) -> Result<SceneObject, SceneError> {
@@ -713,11 +851,9 @@ fn parse_object(
         SceneGeometry::Point {
             position: *position,
         }
-    } else if let Some((vertices, triangles, texture_channels)) = meshes.get(&id) {
-        SceneGeometry::RenderMesh {
-            vertices: *vertices,
-            triangles: *triangles,
-            texture_channels: *texture_channels,
+    } else if let Some(meshes) = meshes.get(&id) {
+        SceneGeometry::RenderMeshes {
+            meshes: meshes.clone(),
         }
     } else if let Some(definition_id) = occurrences.get(&id) {
         SceneGeometry::InstanceReference {
@@ -806,5 +942,50 @@ mod tests {
             .any(|object| object.user_strings.get("fixture")
                 == Some(&"structural-benchmark-v1".into())));
         assert!(!SceneDocument::capabilities().complete_pbr_reconstruction());
+    }
+
+    #[test]
+    fn render_mesh_projection_keeps_indexed_geometry_and_raw_channels() {
+        let mesh = Tessellation {
+            id: "fixture:mesh".into(),
+            body: None,
+            faces: vec![],
+            chordal_deflection: None,
+            source_object: Some(cadmpeg_ir::SourceObjectAssociation {
+                format: "rhino".into(),
+                object_id: "mesh-object".into(),
+                name: None,
+                color: None,
+                visible: Some(true),
+                layer: None,
+                instance_path: vec![],
+            }),
+            vertices: vec![cadmpeg_ir::math::Point3::new(1.0, 2.0, 3.0)],
+            triangles: vec![[0, 0, 0]],
+            feature_edges: vec![[0, 0]],
+            strip_lengths: vec![],
+            normals: vec![cadmpeg_ir::math::Vector3::new(0.0, 0.0, 1.0)],
+            corner_normals: vec![],
+            triangle_groups: vec![],
+            texture_assignments: vec![],
+            channels: vec![cadmpeg_ir::tessellation::TessellationChannel {
+                domain: TessellationChannelDomain::Vertex,
+                item_size: 8,
+                kind: 7,
+                flags: 3,
+                count: 1,
+                data: vec![1, 2, 3, 4, 5, 6, 7, 8],
+                indices: vec![],
+            }],
+        };
+        let projected = meshes_by_source_object(&[mesh]);
+        let meshes = projected.get("mesh-object").unwrap();
+        assert_eq!(meshes.len(), 1);
+        let mesh = &meshes[0];
+        assert_eq!(mesh.vertices, vec![[1.0, 2.0, 3.0]]);
+        assert_eq!(mesh.triangles, vec![[0, 0, 0]]);
+        assert_eq!(mesh.normals, vec![[0.0, 0.0, 1.0]]);
+        assert_eq!(mesh.channels[0].data, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(mesh.channels[0].domain, MeshChannelDomain::Vertex);
     }
 }

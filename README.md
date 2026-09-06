@@ -33,12 +33,12 @@ matter more than pretending every file was decoded completely.
 | Instance references and 4×4 transforms | Typed decode implemented |
 | v6+ instance definitions and ordered member UUIDs | Typed decode implemented |
 | Renderer-facing semantic document (layers, IDs, user strings, blocks, PBR scalar/mapping records) | Implemented with explicit PBR gaps |
+| `rhino3dm-render` technical SVG package | Implemented: deterministic point/display-mesh preview with omission reporting |
 | Exact STEP → Rhino B-rep/NURBS admission path | Implemented, strict and atomic; no mesh fallback |
 | STEP assemblies with Rhino block definition/occurrence export | Not yet supported; intentionally refused |
 | Curves, meshes, Breps, and extrusions | Classified; native typed decode incomplete |
-| Rhino PBR materials and shader parameters | Not decoded; retained source data is not parity |
-| Texture files, embedded bytes, and content hashes | Not exposed |
-| Mesh UV channels and texture mapping transforms | Not exposed by the public API |
+| Texture files and embedded image bytes | Asset descriptors/hashes exposed; image bytes are not yet exposed |
+| Mesh UV channels and per-triangle texture assignments | Exposed as source-tagged raw channels/assignments; Rhino tag vocabulary remains in progress |
 | Geometry census through the Rust `cadmpeg` bridge | Available as an explicit loss report |
 | General 3DM writing or mutation | Not supported; exact STEP import is the current narrow write path |
 
@@ -143,6 +143,44 @@ if !manifest.required_capabilities.complete_pbr_reconstruction() {
 }
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+## Lightweight backend rendering
+
+The workspace's second package, `rhino3dm-render`, renders source display
+meshes and points to deterministic SVG—an immediately usable 2D backend for
+an AI design loop. It has no native renderer, browser, GPU, or temporary mesh
+conversion dependency. It intentionally does not tessellate B-rep/NURBS: an
+exact object with no source display mesh is identified in `omitted_objects`.
+
+```toml
+[dependencies]
+rhino3dm-rs = { git = "https://github.com/lucas-vitrus/rhino3dm-rs" }
+rhino3dm-render = { git = "https://github.com/lucas-vitrus/rhino3dm-rs", package = "rhino3dm-render" }
+```
+
+```rust
+use rhino3dm_render::{render_technical_svg, TechnicalRenderOptions};
+use rhino3dm_rs::scene::SceneDocument;
+
+let scene = SceneDocument::read("model.3dm")?;
+let image = render_technical_svg(&scene, &TechnicalRenderOptions::default())?;
+std::fs::write("preview.svg", image.svg)?;
+if !image.omitted_objects.is_empty() {
+    eprintln!("preview omitted {:?}", image.omitted_objects);
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The equivalent command is:
+
+```bash
+cargo run --release -p rhino3dm-render --bin rhino3dm-svg -- model.3dm preview.svg --isometric
+```
+
+This is a technical wireframe preview, not hidden-line removal or a textured
+PBR image. PBR rendering remains gated on image-byte extraction and fixture
+coverage; the API exposes PBR scalars, mapping transforms, raw mesh channels,
+and per-triangle texture assignments without overstating that gate.
 
 ## Design principles
 

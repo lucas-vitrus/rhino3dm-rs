@@ -11,6 +11,10 @@ readme = "README.md"
 keywords = ["rhino", "3dm", "cad", "opennurbs"]
 categories = ["parser-implementations", "graphics"]
 
+[workspace]
+members = ["crates/rhino3dm-render"]
+resolver = "2"
+
 [lib]
 name = "rhino3dm_rs"
 path = "src/lib.rs"
