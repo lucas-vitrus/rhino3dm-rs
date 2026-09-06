@@ -126,7 +126,7 @@ fn main() {
                 }
             }
             let mut classes: Vec<_> = classes.into_iter().collect();
-            classes.sort_by(|left, right| right.1.cmp(&left.1));
+            classes.sort_by_key(|entry| std::cmp::Reverse(entry.1));
             for (class_id, count) in classes.into_iter().take(12) {
                 println!("class_{class_id}={count}");
             }
