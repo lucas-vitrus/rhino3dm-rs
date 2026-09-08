@@ -2753,6 +2753,21 @@ impl Transform {
         }
     }
 
+    /// Transform the eight corners of a bounding box, matching Python's
+    /// `Transform.TransformBoundingBox` value-returning method.
+    ///
+    /// OpenNURBS represents an invalid transformed box with the finite
+    /// reversed range `(1, 0, 0) .. (-1, 0, 0)`. Preserve that observable
+    /// sentinel for invalid inputs instead of returning NaNs.
+    pub fn transform_bounding_box(self, bounding_box: BoundingBox) -> BoundingBox {
+        if !self.is_valid() || !bounding_box.is_valid() {
+            return BoundingBox::from_coordinates(1.0, 0.0, 0.0, -1.0, 0.0, 0.0);
+        }
+        let mut transformed = bounding_box;
+        transformed.transform(self);
+        transformed
+    }
+
     fn apply_homogeneous(self, [x, y, z, w]: [f64; 4]) -> [f64; 4] {
         std::array::from_fn(|row| {
             self.matrix[row][0] * x
@@ -6623,6 +6638,37 @@ mod tests {
                 center,
             ),
             None
+        );
+    }
+
+    #[test]
+    fn transform_bounding_box_matches_python_8_17_oracle_contract() {
+        let bounding_box = BoundingBox::from_coordinates(1.0, 2.0, 3.0, 4.0, 6.0, 8.0);
+        assert_eq!(
+            Transform::translation(7.0, 11.0, 13.0).transform_bounding_box(bounding_box),
+            BoundingBox::from_coordinates(8.0, 13.0, 16.0, 11.0, 17.0, 21.0)
+        );
+        let rotated = Transform::try_rotation_axis_angle(
+            std::f64::consts::FRAC_PI_2,
+            Vector3d::new(0.0, 0.0, 1.0),
+            Point3d::default(),
+        )
+        .expect("valid rotation")
+        .transform_bounding_box(bounding_box);
+        let expected_rotated = BoundingBox::from_coordinates(-6.0, 1.0, 3.0, -2.0, 4.0, 8.0);
+        for (actual, expected) in [
+            (rotated.min.x, expected_rotated.min.x),
+            (rotated.min.y, expected_rotated.min.y),
+            (rotated.min.z, expected_rotated.min.z),
+            (rotated.max.x, expected_rotated.max.x),
+            (rotated.max.y, expected_rotated.max.y),
+            (rotated.max.z, expected_rotated.max.z),
+        ] {
+            assert!((actual - expected).abs() < 1e-12, "{actual} != {expected}");
+        }
+        assert_eq!(
+            Transform::unset().transform_bounding_box(bounding_box),
+            BoundingBox::from_coordinates(1.0, 0.0, 0.0, -1.0, 0.0, 0.0)
         );
     }
 

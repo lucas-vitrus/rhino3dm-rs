@@ -69128,14 +69128,15 @@
     },
     {
       "acceptance_case_ids": [],
-      "backend": "missing",
+      "backend": "native",
       "id": "py-8-32-1.transform.transformboundingbox.method",
+      "notes": "Implemented and covered by direct 8.17.0 translation, rotation and invalid-transform observations. A pinned 8.32.1 differential case remains required before this obligation can pass.",
       "python": "Transform.TransformBoundingBox",
       "runtime": {
         "doc": "TransformBoundingBox(self: rhino3dm._rhino3dm.Transform, bbox: BND_BoundingBox) -> BND_BoundingBox\n",
         "kind": "callable"
       },
-      "rust_mapping": null,
+      "rust_mapping": "Transform::transform_bounding_box",
       "source_kind": "both",
       "source_pointers": {
         "inventory_json": "#/classes/Transform/declared_members_and_protocols/TransformBoundingBox",

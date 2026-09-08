@@ -246,6 +246,13 @@
       "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
       "notes": "Checks every coefficient of a translated transform and resulting predicates."
     },
+    "py-8-32-1.transform.transformboundingbox.method": {
+      "status": "not_assessed",
+      "backend": "native",
+      "rust_mapping": "Transform::transform_bounding_box",
+      "acceptance_case_ids": [],
+      "notes": "Implemented and covered by direct 8.17.0 translation, rotation and invalid-transform observations. A pinned 8.32.1 differential case remains required before this obligation can pass."
+    },
     "py-8-32-1.transform.tofloatarray.method": {
       "status": "passing",
       "backend": "native",
