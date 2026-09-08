@@ -68954,8 +68954,9 @@
     },
     {
       "acceptance_case_ids": [],
-      "backend": "missing",
+      "backend": "native",
       "id": "py-8-32-1.transform.rotation.overload-2",
+      "notes": "Implemented and covered by direct 8.17.0 matrix observations for cardinal, antiparallel, oblique and zero-direction inputs. It remains runtime-only in the 8.32.1 ledger and needs a pinned primary differential case before it can be considered complete.",
       "python": "Transform.Rotation",
       "runtime": {
         "doc": "Rotation(*args, **kwargs)\nOverloaded function.\n\n1. Rotation(angleRadians: typing.SupportsFloat | typing.SupportsIndex, rotationAxis: rhino3dm._rhino3dm.Vector3d, rotationCenter: rhino3dm._rhino3dm.Point3d) -> rhino3dm._rhino3dm.Transform\n\n2. Rotation(startDirection: rhino3dm._rhino3dm.Vector3d, endDirection: rhino3dm._rhino3dm.Vector3d, rotationCenter: rhino3dm._rhino3dm.Point3d) -> rhino3dm._rhino3dm.Transform\n",
@@ -68963,7 +68964,7 @@
         "overload_index": 2,
         "overload_signature": "Rotation(startDirection: rhino3dm._rhino3dm.Vector3d, endDirection: rhino3dm._rhino3dm.Vector3d, rotationCenter: rhino3dm._rhino3dm.Point3d) -> rhino3dm._rhino3dm.Transform"
       },
-      "rust_mapping": null,
+      "rust_mapping": "Transform::try_rotation_between_directions",
       "source_kind": "runtime_only",
       "source_pointers": {
         "inventory_json": "#/classes/Transform/declared_members_and_protocols/Rotation",

@@ -218,6 +218,13 @@
       "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
       "notes": "Axis-angle rotation around a point is checked by matrix, predicates and point transformation. Direction-to-direction rotation remains incomplete."
     },
+    "py-8-32-1.transform.rotation.overload-2": {
+      "status": "runtime_stub_divergence",
+      "backend": "native",
+      "rust_mapping": "Transform::try_rotation_between_directions",
+      "acceptance_case_ids": [],
+      "notes": "Implemented and covered by direct 8.17.0 matrix observations for cardinal, antiparallel, oblique and zero-direction inputs. It remains runtime-only in the 8.32.1 ledger and needs a pinned primary differential case before it can be considered complete."
+    },
     "py-8-32-1.transform.scale.overload-1": {
       "status": "not_assessed",
       "backend": "native",

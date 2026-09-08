@@ -2657,6 +2657,82 @@ impl Transform {
         })
     }
 
+    /// Reproduce Python's direction-to-direction `Transform.Rotation`
+    /// overload. The binding's observed result narrows normalized direction
+    /// components through f32 before constructing the transform, so this
+    /// compatibility method keeps that behavior explicit.
+    pub fn try_rotation_between_directions(
+        start_direction: Vector3d,
+        end_direction: Vector3d,
+        rotation_center: Point3d,
+    ) -> Option<Self> {
+        if !rotation_center.x.is_finite()
+            || !rotation_center.y.is_finite()
+            || !rotation_center.z.is_finite()
+        {
+            return None;
+        }
+        let start = python_normalized(start_direction)?;
+        let end = python_normalized(end_direction)?;
+        let dot = start.dot(end).clamp(-1.0, 1.0);
+        let cross = start.cross(end);
+        let cross_length = cross.length();
+        let around_center = |linear: [[f64; 3]; 3]| {
+            let center = [rotation_center.x, rotation_center.y, rotation_center.z];
+            let offset: [f64; 3] = std::array::from_fn(|row| {
+                center[row]
+                    - linear[row][0] * center[0]
+                    - linear[row][1] * center[1]
+                    - linear[row][2] * center[2]
+            });
+            Self {
+                matrix: [
+                    [linear[0][0], linear[0][1], linear[0][2], offset[0]],
+                    [linear[1][0], linear[1][1], linear[1][2], offset[1]],
+                    [linear[2][0], linear[2][1], linear[2][2], offset[2]],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+            }
+        };
+        if cross_length <= f64::EPSILON {
+            if dot >= 0.0 {
+                return Some(Self::IDENTITY);
+            }
+            let reference = if start.x.abs() >= start.y.abs() && start.x.abs() >= start.z.abs() {
+                Vector3d::new(0.0, 0.0, 1.0)
+            } else if start.y.abs() >= start.z.abs() {
+                Vector3d::new(1.0, 0.0, 0.0)
+            } else {
+                Vector3d::new(0.0, 1.0, 0.0)
+            };
+            let axis = start.cross(reference);
+            let axis = python_normalized(axis)?;
+            let components = [axis.x, axis.y, axis.z];
+            let linear: [[f64; 3]; 3] = std::array::from_fn(|row| {
+                std::array::from_fn(|column| {
+                    2.0 * components[row] * components[column]
+                        - if row == column { 1.0 } else { 0.0 }
+                })
+            });
+            return Some(around_center(linear));
+        }
+        let skew = [
+            [0.0, -cross.z, cross.y],
+            [cross.z, 0.0, -cross.x],
+            [-cross.y, cross.x, 0.0],
+        ];
+        let coefficient = (1.0 - dot) / (cross_length * cross_length);
+        let linear: [[f64; 3]; 3] = std::array::from_fn(|row| {
+            std::array::from_fn(|column| {
+                let square = (0..3)
+                    .map(|index| skew[row][index] * skew[index][column])
+                    .sum::<f64>();
+                (if row == column { 1.0 } else { 0.0 }) + skew[row][column] + square * coefficient
+            })
+        });
+        Some(around_center(linear))
+    }
+
     pub fn to_row_major_array(self) -> [f64; 16] {
         std::array::from_fn(|index| self.matrix[index / 4][index % 4])
     }
@@ -4005,6 +4081,18 @@ fn normalized(vector: Vector3d) -> Option<Vector3d> {
     let length = vector.length();
     (length.is_finite() && length > 0.0)
         .then(|| Vector3d::new(vector.x / length, vector.y / length, vector.z / length))
+}
+
+fn python_normalized(vector: Vector3d) -> Option<Vector3d> {
+    let length = vector.length();
+    if !length.is_finite() || length == 0.0 {
+        return None;
+    }
+    Some(Vector3d::new(
+        f64::from((vector.x / length) as f32),
+        f64::from((vector.y / length) as f32),
+        f64::from((vector.z / length) as f32),
+    ))
 }
 
 fn transform_vector(transform: Transform, vector: Vector3d) -> Vector3d {
@@ -6468,6 +6556,73 @@ mod tests {
         assert_eq!(
             Transform::mirror(anchor, Vector3d::default()),
             Transform::IDENTITY
+        );
+    }
+
+    #[test]
+    fn transform_direction_rotation_matches_python_8_17_oracle_contract() {
+        let center = Point3d::new(2.0, 3.0, 5.0);
+        assert_eq!(
+            Transform::try_rotation_between_directions(
+                Vector3d::new(1.0, 0.0, 0.0),
+                Vector3d::new(0.0, 1.0, 0.0),
+                center,
+            )
+            .expect("non-degenerate directions"),
+            Transform {
+                matrix: [
+                    [0.0, -1.0, 0.0, 5.0],
+                    [1.0, 0.0, 0.0, 1.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+            }
+        );
+        assert_eq!(
+            Transform::try_rotation_between_directions(
+                Vector3d::new(1.0, 0.0, 0.0),
+                Vector3d::new(-1.0, 0.0, 0.0),
+                center,
+            )
+            .expect("anti-parallel directions"),
+            Transform {
+                matrix: [
+                    [-1.0, 0.0, 0.0, 4.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, -1.0, 10.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+            }
+        );
+        let oblique = Transform::try_rotation_between_directions(
+            Vector3d::new(1.0, 1.0, 0.0),
+            Vector3d::new(0.0, 0.0, 2.0),
+            center,
+        )
+        .expect("oblique directions");
+        let expected = [
+            [0.5, -0.5, -0.7071067690849304, 6.035533905029297],
+            [-0.5, 0.5, -0.7071067690849304, 6.035533905029297],
+            [
+                0.7071067690849304,
+                0.7071067690849304,
+                0.0,
+                1.4644660949707031,
+            ],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        for (row, expected_row) in oblique.matrix.iter().zip(expected) {
+            for (actual, expected) in row.iter().zip(expected_row) {
+                assert!((actual - expected).abs() < 1e-7, "{actual} != {expected}");
+            }
+        }
+        assert_eq!(
+            Transform::try_rotation_between_directions(
+                Vector3d::default(),
+                Vector3d::new(1.0, 0.0, 0.0),
+                center,
+            ),
+            None
         );
     }
 
