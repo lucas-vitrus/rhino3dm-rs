@@ -53,6 +53,13 @@ records, clears the vertex collection, and makes those faces ineligible for
 valid triangle/quad counts. Rust now has the same vertex-clear and retained
 face behavior.
 
+Native bridge mesh projections now retain per-vertex normals. Rust-created
+meshes expose normal addition, clearing, flipping, unitization, and averaged
+normal computation for valid triangle/quad faces. The mixed Python-authored
+fixture reports five vertices, three display triangles, and five normals.
+Normals remain a bounded slice: source normal seams, UVs, colors, topology,
+and mesh writing are not yet complete.
+
 ## P05 curve read projection seed
 
 `File3dm::curves()` now exposes the bridge's typed curve carriers without
@@ -81,6 +88,7 @@ parity, and curve writing remain separate obligations.
 | P04 Python-authored mixed mesh fixture → Rust `File3dm::meshes()` projection | PASS: one mesh, five vertices, three indexed triangles; quad expansion explicitly reported |
 | P04 mesh collection mutation against Python 8.17.0 | PASS: vertex addition, valid triangle/quad counts, invalid-face retention with `-1`, replacement and face clearing |
 | P04 vertex clear against Python 8.17.0 | PASS: vertices clear while face records remain; valid face counts become zero |
+| P04 mesh normals against Python 8.17.0 and native fixture | PASS: `ComputeNormals`, `Flip`, `UnitizeNormals`, `Clear`, and five native normals observed |
 | P05 Python-authored line/polyline/NURBS fixture → Rust `File3dm::curves()` projection | PASS: three typed curve carriers; no sampled-point flattening |
 | Primary Python runtime inspection | Distribution 8.32.1, runtime 8.32.2; 212 exported classes including 49 enums |
 | Clay Python runtime inspection | Distribution/runtime 8.17.0; 193 exported classes including 46 enums |

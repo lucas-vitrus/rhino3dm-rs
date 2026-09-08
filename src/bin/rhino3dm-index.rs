@@ -150,9 +150,10 @@ fn main() {
             println!("meshes={}", file.meshes().len());
             for (index, mesh) in file.meshes().iter().enumerate() {
                 println!(
-                    "mesh_{index}_vertices={} mesh_{index}_triangles={}",
+                    "mesh_{index}_vertices={} mesh_{index}_triangles={} mesh_{index}_normals={}",
                     mesh.vertices.len(),
-                    mesh.triangles.len()
+                    mesh.triangles.len(),
+                    mesh.normals.len()
                 );
             }
             println!("mesh_views={}", file.mesh_views().len());

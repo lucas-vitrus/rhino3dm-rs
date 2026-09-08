@@ -443,6 +443,11 @@ impl File3dm {
                     .iter()
                     .map(|indices| MeshFace::Triangle(indices.map(|index| index as i32)))
                     .collect(),
+                normals: mesh
+                    .normals
+                    .iter()
+                    .map(|normal| Vector3f::new(normal.x as f32, normal.y as f32, normal.z as f32))
+                    .collect(),
             })
             .collect();
         let curves = match RhinoCodec.decode(
@@ -747,6 +752,7 @@ pub enum MeshFace {
 pub struct Mesh {
     pub vertices: Vec<Point3d>,
     pub faces: Vec<MeshFace>,
+    pub normals: Vec<Vector3f>,
 }
 
 impl Mesh {
@@ -755,6 +761,7 @@ impl Mesh {
         Self {
             vertices: Vec::new(),
             faces: Vec::new(),
+            normals: Vec::new(),
         }
     }
 
@@ -800,6 +807,133 @@ impl Mesh {
             return false;
         };
         *vertex = point;
+        true
+    }
+
+    /// Number of stored vertex normals.
+    pub fn normal_count(&self) -> usize {
+        self.normals.len()
+    }
+
+    /// Add one single-precision vertex normal and return its index.
+    pub fn add_normal(&mut self, normal: Vector3f) -> usize {
+        let index = self.normals.len();
+        self.normals.push(normal);
+        index
+    }
+
+    /// Remove all stored vertex normals.
+    pub fn clear_normals(&mut self) {
+        self.normals.clear();
+    }
+
+    /// Negate all stored normals, matching `Mesh.Normals.Flip()`.
+    pub fn flip_normals(&mut self) {
+        for normal in &mut self.normals {
+            normal.x = -normal.x;
+            normal.y = -normal.y;
+            normal.z = -normal.z;
+        }
+    }
+
+    /// Normalize every stored normal. Returns false when there is no normal
+    /// data or when any normal is zero/non-finite.
+    pub fn unitize_normals(&mut self) -> bool {
+        if self.normals.is_empty() {
+            return false;
+        }
+        let mut valid = true;
+        for normal in &mut self.normals {
+            let length = f32::sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+            if !length.is_finite() || length == 0.0 {
+                valid = false;
+                continue;
+            }
+            normal.x /= length;
+            normal.y /= length;
+            normal.z /= length;
+        }
+        valid
+    }
+
+    /// Compute averaged per-vertex normals from valid triangle and quad faces.
+    /// Degenerate or invalid faces are skipped. Returns false if no face
+    /// contributes a normal.
+    pub fn compute_normals(&mut self) -> bool {
+        let mut sums = vec![[0.0_f64; 3]; self.vertices.len()];
+        let mut contributed = false;
+        for face in &self.faces {
+            let indices: Vec<usize> = match face {
+                MeshFace::Triangle(indices) => indices
+                    .iter()
+                    .map(|&index| usize::try_from(index))
+                    .collect::<Result<_, _>>()
+                    .ok()
+                    .filter(|indices: &Vec<usize>| {
+                        indices.iter().all(|&index| index < self.vertices.len())
+                    })
+                    .unwrap_or_default(),
+                MeshFace::Quad(indices) => indices
+                    .iter()
+                    .map(|&index| usize::try_from(index))
+                    .collect::<Result<_, _>>()
+                    .ok()
+                    .filter(|indices: &Vec<usize>| {
+                        indices.iter().all(|&index| index < self.vertices.len())
+                    })
+                    .unwrap_or_default(),
+            };
+            let triangles: Vec<[usize; 3]> = match indices.as_slice() {
+                [a, b, c] => vec![[*a, *b, *c]],
+                [a, b, c, d] => vec![[*a, *b, *c], [*a, *c, *d]],
+                _ => Vec::new(),
+            };
+            for [a, b, c] in triangles {
+                let ab = (
+                    self.vertices[b].x - self.vertices[a].x,
+                    self.vertices[b].y - self.vertices[a].y,
+                    self.vertices[b].z - self.vertices[a].z,
+                );
+                let ac = (
+                    self.vertices[c].x - self.vertices[a].x,
+                    self.vertices[c].y - self.vertices[a].y,
+                    self.vertices[c].z - self.vertices[a].z,
+                );
+                let cross = (
+                    ab.1 * ac.2 - ab.2 * ac.1,
+                    ab.2 * ac.0 - ab.0 * ac.2,
+                    ab.0 * ac.1 - ab.1 * ac.0,
+                );
+                let length = (cross.0 * cross.0 + cross.1 * cross.1 + cross.2 * cross.2).sqrt();
+                if !length.is_finite() || length == 0.0 {
+                    continue;
+                }
+                contributed = true;
+                for index in [a, b, c] {
+                    sums[index][0] += cross.0;
+                    sums[index][1] += cross.1;
+                    sums[index][2] += cross.2;
+                }
+            }
+        }
+        if !contributed {
+            return false;
+        }
+        self.normals = sums
+            .into_iter()
+            .map(|[x, y, z]| {
+                let length = (x * x + y * y + z * z).sqrt();
+                if length == 0.0 || !length.is_finite() {
+                    Vector3f::default()
+                } else {
+                    Vector3f::new(
+                        (x / length) as f32,
+                        (y / length) as f32,
+                        (z / length) as f32,
+                    )
+                }
+            })
+            .collect();
         true
     }
 
@@ -3644,4 +3778,26 @@ fn clearing_mesh_vertices_retains_faces_but_invalidates_their_counts() {
     assert_eq!(mesh.face_count(), 1);
     assert_eq!(mesh.triangle_count(), 0);
     assert_eq!(mesh.face(0), Some(MeshFace::Triangle([0, 1, 2])));
+}
+
+#[test]
+fn mesh_normals_compute_flip_unitize_and_clear() {
+    let mut mesh = Mesh::new();
+    for point in [
+        Point3d::new(0.0, 0.0, 0.0),
+        Point3d::new(1.0, 0.0, 0.0),
+        Point3d::new(0.0, 1.0, 0.0),
+    ] {
+        mesh.add_vertex(point);
+    }
+    mesh.add_triangle([0, 1, 2]);
+    assert!(mesh.compute_normals());
+    assert_eq!(mesh.normal_count(), 3);
+    assert_eq!(mesh.normals[0], Vector3f::new(0.0, 0.0, 1.0));
+    mesh.flip_normals();
+    assert_eq!(mesh.normals[0], Vector3f::new(0.0, 0.0, -1.0));
+    assert!(mesh.unitize_normals());
+    mesh.clear_normals();
+    assert_eq!(mesh.normal_count(), 0);
+    assert!(!mesh.unitize_normals());
 }
