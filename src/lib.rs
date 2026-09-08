@@ -135,6 +135,124 @@ pub struct SourceRange {
     pub length: u64,
 }
 
+/// Canonical RFC 4122 byte order for IDs exposed by Python `uuid.UUID`.
+///
+/// OpenNURBS stores the first three UUID fields in little-endian order. Use
+/// [`Self::from_open_nurbs_bytes`] and [`Self::to_open_nurbs_bytes`] at the
+/// archive boundary; document/table APIs always expose canonical bytes and
+/// strings.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Uuid([u8; 16]);
+
+impl Uuid {
+    pub const NIL: Self = Self([0; 16]);
+
+    pub const fn from_bytes(bytes: [u8; 16]) -> Self {
+        Self(bytes)
+    }
+
+    pub const fn from_open_nurbs_bytes(bytes: [u8; 16]) -> Self {
+        Self([
+            bytes[3], bytes[2], bytes[1], bytes[0], bytes[5], bytes[4], bytes[7], bytes[6],
+            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+        ])
+    }
+
+    pub const fn as_bytes(self) -> [u8; 16] {
+        self.0
+    }
+
+    pub const fn to_open_nurbs_bytes(self) -> [u8; 16] {
+        Self::from_open_nurbs_bytes(self.0).0
+    }
+
+    pub fn is_nil(self) -> bool {
+        self.0 == [0; 16]
+    }
+
+    pub fn parse_str(value: &str) -> Result<Self, ParseUuidError> {
+        let mut hex = [0_u8; 32];
+        let mut length = 0;
+        for byte in value.bytes() {
+            if byte == b'-' {
+                continue;
+            }
+            if length == hex.len() || !byte.is_ascii_hexdigit() {
+                return Err(ParseUuidError);
+            }
+            hex[length] = byte;
+            length += 1;
+        }
+        if length != hex.len() {
+            return Err(ParseUuidError);
+        }
+        let mut bytes = [0_u8; 16];
+        for (index, slot) in bytes.iter_mut().enumerate() {
+            let pair =
+                std::str::from_utf8(&hex[index * 2..index * 2 + 2]).map_err(|_| ParseUuidError)?;
+            *slot = u8::from_str_radix(pair, 16).map_err(|_| ParseUuidError)?;
+        }
+        Ok(Self(bytes))
+    }
+}
+
+impl From<[u8; 16]> for Uuid {
+    fn from(value: [u8; 16]) -> Self {
+        Self::from_bytes(value)
+    }
+}
+
+impl From<Uuid> for [u8; 16] {
+    fn from(value: Uuid) -> Self {
+        value.as_bytes()
+    }
+}
+
+impl std::str::FromStr for Uuid {
+    type Err = ParseUuidError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::parse_str(value)
+    }
+}
+
+impl std::fmt::Display for Uuid {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let bytes = self.0;
+        write!(
+            formatter,
+            "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            bytes[0],
+            bytes[1],
+            bytes[2],
+            bytes[3],
+            bytes[4],
+            bytes[5],
+            bytes[6],
+            bytes[7],
+            bytes[8],
+            bytes[9],
+            bytes[10],
+            bytes[11],
+            bytes[12],
+            bytes[13],
+            bytes[14],
+            bytes[15]
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseUuidError;
+
+impl std::fmt::Display for ParseUuidError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("invalid UUID")
+    }
+}
+
+impl std::error::Error for ParseUuidError {}
+
 /// Immutable source bytes retained by a [`File3dm`].
 ///
 /// Ranges in the archive index are meaningful only against this store. The
@@ -282,19 +400,19 @@ pub struct PointObject {
 pub struct Layer {
     pub name: String,
     pub index: i32,
-    pub parent_layer_id: Option<[u8; 16]>,
-    pub id: [u8; 16],
+    pub parent_layer_id: Option<Uuid>,
+    pub id: Uuid,
     pub visible: bool,
     pub locked: bool,
 }
 
 impl Layer {
-    pub fn new(name: impl Into<String>, id: [u8; 16]) -> Self {
+    pub fn new(name: impl Into<String>, id: impl Into<Uuid>) -> Self {
         Self {
             name: name.into(),
             index: -1,
             parent_layer_id: None,
-            id,
+            id: id.into(),
             visible: true,
             locked: false,
         }
@@ -686,12 +804,14 @@ impl File3dm {
     }
 
     /// Find a layer by its native UUID bytes.
-    pub fn find_layer(&self, id: [u8; 16]) -> Option<&Layer> {
+    pub fn find_layer(&self, id: impl Into<Uuid>) -> Option<&Layer> {
+        let id = id.into();
         self.layers.iter().find(|layer| layer.id == id)
     }
 
     /// Find a mutable layer by its native UUID bytes.
-    pub fn find_layer_mut(&mut self, id: [u8; 16]) -> Option<&mut Layer> {
+    pub fn find_layer_mut(&mut self, id: impl Into<Uuid>) -> Option<&mut Layer> {
+        let id = id.into();
         self.layers.iter_mut().find(|layer| layer.id == id)
     }
 
@@ -2070,7 +2190,7 @@ pub const UNSET_VALUE: f64 = -1.234_321_012_343_21e308;
 /// The typed payload of `rhino3dm.InstanceReference`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct InstanceReference {
-    pub definition_id: [u8; 16],
+    pub definition_id: Uuid,
     pub transform: Transform,
 }
 
@@ -2079,10 +2199,10 @@ pub struct InstanceReference {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstanceDefinition {
     pub source: SourceRange,
-    pub id: [u8; 16],
+    pub id: Uuid,
     pub index: Option<i32>,
     pub name: String,
-    pub members: Vec<[u8; 16]>,
+    pub members: Vec<Uuid>,
 }
 
 /// Parse outcome for one source instance-definition record.
@@ -3797,7 +3917,7 @@ impl Interval {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObjectAttributes {
     pub source: SourceRange,
-    pub id: Option<[u8; 16]>,
+    pub id: Option<Uuid>,
     pub name: Option<String>,
     pub url: Option<String>,
     pub layer_index: Option<i32>,
@@ -3866,9 +3986,9 @@ impl ObjectAttributes {
     }
 
     /// Create authoring attributes with a caller-supplied native object ID.
-    pub fn with_id(id: [u8; 16]) -> Self {
+    pub fn with_id(id: impl Into<Uuid>) -> Self {
         Self {
-            id: Some(id),
+            id: Some(id.into()),
             complete: true,
             ..Self::default()
         }
@@ -5171,7 +5291,7 @@ fn parse_instance_reference(bytes: &[u8], source: SourceRange) -> Result<Instanc
             capability: "a non-v1 instance-reference payload",
         });
     }
-    let definition_id = read_uuid(bytes, &mut offset, source_end)?;
+    let definition_id = Uuid::from_open_nurbs_bytes(read_uuid(bytes, &mut offset, source_end)?);
     let mut matrix = [[0.0; 4]; 4];
     for row in &mut matrix {
         for value in row {
@@ -5220,7 +5340,7 @@ fn parse_instance_definition(
         });
     }
     let (index, id, name) = parse_model_component(bytes, &mut offset, outer_end, archive_version)?;
-    if id == [0; 16] {
+    if id.is_nil() {
         return Err(Error::Unsupported {
             capability: "an instance definition with a nil UUID",
         });
@@ -5266,7 +5386,11 @@ fn parse_instance_definition(
         }
         members.reserve(count);
         for _ in 0..count {
-            members.push(read_uuid(bytes, &mut offset, outer_end)?);
+            members.push(Uuid::from_open_nurbs_bytes(read_uuid(
+                bytes,
+                &mut offset,
+                outer_end,
+            )?));
         }
     }
     Ok(InstanceDefinition {
@@ -5319,7 +5443,7 @@ fn parse_model_component(
     offset: &mut usize,
     bound: usize,
     archive_version: u32,
-) -> Result<(Option<i32>, [u8; 16], String), Error> {
+) -> Result<(Option<i32>, Uuid, String), Error> {
     const MODEL_ATTRIBUTES: u32 = 0x4000_8002;
     let chunk = chunk_at(bytes, *offset, bound, archive_version)?;
     if chunk.typecode != MODEL_ATTRIBUTES || chunk.short {
@@ -5346,8 +5470,8 @@ fn parse_model_component(
         }
     }
     let id = match take_u8(bytes, &mut payload_offset, payload_end)? {
-        0 | 2 => [0; 16],
-        1 => read_uuid(bytes, &mut payload_offset, payload_end)?,
+        0 | 2 => Uuid::NIL,
+        1 => Uuid::from_open_nurbs_bytes(read_uuid(bytes, &mut payload_offset, payload_end)?),
         _ => {
             return Err(Error::Unsupported {
                 capability: "an invalid model UUID status",
@@ -5404,7 +5528,7 @@ fn parse_attributes(bytes: &[u8], source: SourceRange) -> Result<ObjectAttribute
     let layer_index = read_i32(bytes, &mut offset, end)?;
     let mut attributes = ObjectAttributes {
         source,
-        id: Some(id),
+        id: Some(Uuid::from_open_nurbs_bytes(id)),
         name: None,
         layer_index: Some(layer_index),
         ..ObjectAttributes::default()
@@ -5883,16 +6007,8 @@ fn decode_layers(bytes: &[u8]) -> Result<Vec<Layer>, Error> {
         .collect()
 }
 
-fn parse_uuid_bytes(value: &str) -> Option<[u8; 16]> {
-    let hex = value.replace('-', "");
-    if hex.len() != 32 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    let mut result = [0_u8; 16];
-    for (index, slot) in result.iter_mut().enumerate() {
-        *slot = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).ok()?;
-    }
-    Some(result)
+fn parse_uuid_bytes(value: &str) -> Option<Uuid> {
+    Uuid::parse_str(value).ok()
 }
 
 fn end(range: SourceRange) -> Result<u64, Error> {
@@ -5909,6 +6025,38 @@ fn end(range: SourceRange) -> Result<u64, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uuid_distinguishes_canonical_and_open_nurbs_wire_order() {
+        let id = Uuid::parse_str("c3101a1d-f157-11d3-bfe7-0010830122f0").unwrap();
+        assert_eq!(id.to_string(), "c3101a1d-f157-11d3-bfe7-0010830122f0");
+        assert_eq!(id.to_open_nurbs_bytes(), POINT_CLASS);
+        assert_eq!(Uuid::from_open_nurbs_bytes(POINT_CLASS), id);
+        assert_eq!(
+            Uuid::parse_str("C3101A1DF15711D3BFE70010830122F0").unwrap(),
+            id
+        );
+        assert!(Uuid::NIL.is_nil());
+        assert!(Uuid::parse_str("not-a-uuid").is_err());
+    }
+
+    #[test]
+    fn object_attribute_ids_are_exposed_in_canonical_uuid_order() {
+        let canonical = Uuid::parse_str("00112233-4455-6677-8899-aabbccddeeff").unwrap();
+        let mut payload = vec![0x20];
+        payload.extend(canonical.to_open_nurbs_bytes());
+        payload.extend(0_i32.to_le_bytes());
+        payload.push(0);
+        let attributes = parse_attributes(
+            &payload,
+            SourceRange {
+                offset: 0,
+                length: payload.len() as u64,
+            },
+        )
+        .unwrap();
+        assert_eq!(attributes.id, Some(canonical));
+    }
 
     #[test]
     fn plane_world_frames_and_point_evaluation_match_python_shape() {
@@ -6653,8 +6801,9 @@ mod tests {
     }
     #[test]
     fn decodes_v1_instance_reference_prefix() {
+        let definition_id = Uuid::parse_str("00112233-4455-6677-8899-aabbccddeeff").unwrap();
         let mut payload = vec![0x10];
-        payload.extend_from_slice(&[0x7a; 16]);
+        payload.extend_from_slice(&definition_id.to_open_nurbs_bytes());
         for row in Transform::IDENTITY.matrix {
             for value in row {
                 payload.extend_from_slice(&value.to_le_bytes());
@@ -6668,7 +6817,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(reference.definition_id, [0x7a; 16]);
+        assert_eq!(reference.definition_id, definition_id);
         assert_eq!(reference.transform, Transform::IDENTITY);
     }
     #[test]

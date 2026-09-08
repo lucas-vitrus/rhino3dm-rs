@@ -131,12 +131,18 @@ endpoints/midpoint, bounds, closest queries, trimming, reversal, and
 conformal-transform admission.
 
 This is an oracle-shaped analytic slice, not completion of P02: Cone,
-Cylinder, UUID contracts, units/tolerances, and the remaining
+units/tolerances, and the remaining
 non-finite/intersection edge matrix are still open.
+
+Document UUIDs now use one canonical RFC 4122 representation. The explicit
+OpenNURBS wire conversion swaps the first 32-, 16-, and 16-bit fields at the
+archive boundary, while parsing, formatting, layers, object attributes,
+instance references, and instance definitions expose canonical bytes. Raw
+class-codec constants remain wire values for direct source comparison.
 
 | Check | Result |
 | --- | --- |
-| `cargo test --workspace --all-targets` | PASS: 54 library tests + 3 renderer tests; binary targets had no unit tests |
+| `cargo test --workspace --all-targets` | PASS: 56 library tests + 3 renderer tests; binary targets had no unit tests |
 | `cargo clippy --workspace --all-targets -- -D warnings` | PASS |
 | `cargo fmt --all` and `git diff --check` | PASS |
 | Paired `math-basics-v1` Python/Rust conformance | PASS with `atol=rtol=1e-12`; covers noncommuting composition, inverse fallback, Point3d transform, Vector3d mutation and observed f32 narrowing in `Translation(Vector3d)` |
@@ -151,6 +157,7 @@ non-finite/intersection edge matrix are still open.
 | P02 Arc value-object slice | PASS: angle-domain evaluation, bounds, closest queries, trimming, reversal, and conformal/nonuniform transform behavior |
 | P02 Box value-object slice | PASS: normalized point evaluation, validity, area/volume/center, closest point, and transform behavior |
 | P02 Cylinder value-object slice | PASS: constructible circle/height surface, signed height endpoints, axis, center, finite/validity, and `CircleAt` behavior |
+| P02/P03 canonical UUID contract | PASS: canonical string parsing/formatting, nil handling, OpenNURBS wire round trip, and canonical object-attribute ID exposure |
 | Paired `foundation-point4d-v1` Python/Rust conformance | PASS with exact numeric comparison; covers Point4d construction, four mutable coordinates, equality, and encoding |
 | Paired `geometry-line-v1` Python/Rust conformance | PASS with `atol=rtol=1e-12`; covers mutable endpoints, direction/length/tangent/validity, extrapolating `PointAt`, degenerate behavior, and in-place transform |
 | Overload-aware operation ledger generation | PASS: 3,229 obligations, 122 paired-case-backed `passing` mappings, 1,044 unassessed and 2,063 runtime/stub divergences |
