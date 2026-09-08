@@ -1124,9 +1124,10 @@ impl Mesh {
     }
 
     /// Write a standalone native mesh object through the Rust Rhino encoder.
-    /// Native quad faces are represented as two triangles by the current
-    /// bridge writer; invalid faces and mismatched auxiliary channel lengths
-    /// are rejected before any destination bytes are replaced.
+    /// The bridge provides the outer archive writer; this method patches its
+    /// triangle-only face carrier into Rhino's native four-index quad records.
+    /// Invalid faces and mismatched auxiliary channel lengths are rejected
+    /// before any destination bytes are replaced.
     pub fn write(&self, path: impl AsRef<Path>) -> Result<(), Error> {
         if self.vertices.is_empty() {
             return Err(Error::Unsupported {
@@ -1134,14 +1135,16 @@ impl Mesh {
             });
         }
         let mut triangles = Vec::new();
+        let mut quad_fourths = Vec::new();
         for face in &self.faces {
             match face {
                 MeshFace::Triangle(indices) if self.face_is_valid(indices) => {
                     triangles.push(indices.map(|index| index as u32));
+                    quad_fourths.push(None);
                 }
                 MeshFace::Quad(indices) if self.face_is_valid(indices) => {
                     triangles.push([indices[0] as u32, indices[1] as u32, indices[2] as u32]);
-                    triangles.push([indices[0] as u32, indices[2] as u32, indices[3] as u32]);
+                    quad_fourths.push(Some(indices[3] as u32));
                 }
                 _ => {
                     return Err(Error::Unsupported {
@@ -1226,6 +1229,7 @@ impl Mesh {
         let mut bytes = Vec::new();
         plan.write_to(&mut bytes)
             .map_err(|error| Error::Decode(error.to_string()))?;
+        patch_mesh_quad_indices(&mut bytes, &quad_fourths)?;
         std::fs::write(path, bytes)?;
         Ok(())
     }
@@ -2409,6 +2413,325 @@ struct Chunk {
     body: SourceRange,
     short: bool,
     value: i64,
+}
+
+/// Convert selected triangle-only bridge records to Rhino's native quad form.
+/// An `ON_Mesh` face stores four equal-width indices: triangles repeat the
+/// third index, whereas quads retain a distinct fourth index. The bridge has
+/// already emitted a fully framed one-mesh archive, so this only changes
+/// fixed-width payload bytes and the immediate `CLASS_DATA` checksum.
+fn patch_mesh_quad_indices(bytes: &mut [u8], quad_fourths: &[Option<u32>]) -> Result<(), Error> {
+    if quad_fourths.iter().all(Option::is_none) {
+        return Ok(());
+    }
+    let header = parse_header(bytes)?;
+    let archive = scan_archive(bytes, header.archive_version)?;
+    let mesh = archive
+        .objects
+        .iter()
+        .find(|object| object.geometry_kind == GeometryKind::Mesh)
+        .ok_or(Error::Unsupported {
+            capability: "patching a mesh writer output without a mesh object",
+        })?;
+    let data = mesh.class_data.ok_or(Error::Unsupported {
+        capability: "patching a mesh writer output without class data",
+    })?;
+    let start = usize::try_from(data.offset).map_err(|_| Error::OutOfBounds {
+        offset: data.offset,
+        end: u64::MAX,
+        bound: bytes.len() as u64,
+    })?;
+    let data_end = usize::try_from(end(data)?).map_err(|_| Error::OutOfBounds {
+        offset: data.offset,
+        end: u64::MAX,
+        bound: bytes.len() as u64,
+    })?;
+    const FACE_COUNT_OFFSET: usize = 5;
+    const FACE_WIDTH_OFFSET: usize = 162;
+    const FACE_DATA_OFFSET: usize = 166;
+    let face_count_end = start
+        .checked_add(FACE_COUNT_OFFSET + 4)
+        .ok_or(Error::OutOfBounds {
+            offset: data.offset,
+            end: u64::MAX,
+            bound: bytes.len() as u64,
+        })?;
+    if face_count_end > data_end {
+        return Err(Error::Truncated {
+            offset: start as u64,
+            needed: FACE_COUNT_OFFSET + 4,
+        });
+    }
+    let face_count = i32::from_le_bytes(
+        bytes[start + FACE_COUNT_OFFSET..face_count_end]
+            .try_into()
+            .unwrap(),
+    );
+    if face_count < 0 || face_count as usize != quad_fourths.len() {
+        return Err(Error::Unsupported {
+            capability: "patching a mesh writer output with an unexpected face count",
+        });
+    }
+    let width_end = start
+        .checked_add(FACE_WIDTH_OFFSET + 4)
+        .ok_or(Error::OutOfBounds {
+            offset: data.offset,
+            end: u64::MAX,
+            bound: bytes.len() as u64,
+        })?;
+    if width_end > data_end {
+        return Err(Error::Truncated {
+            offset: start as u64,
+            needed: FACE_WIDTH_OFFSET + 4,
+        });
+    }
+    let width = i32::from_le_bytes(
+        bytes[start + FACE_WIDTH_OFFSET..width_end]
+            .try_into()
+            .unwrap(),
+    );
+    let width = match width {
+        1 | 2 | 4 => width as usize,
+        _ => {
+            return Err(Error::Unsupported {
+                capability: "patching a mesh writer output with an unsupported index width",
+            })
+        }
+    };
+    let mut direct_changes = Vec::new();
+    for (face_index, fourth) in quad_fourths.iter().enumerate() {
+        let Some(fourth) = fourth else {
+            continue;
+        };
+        let offset = start
+            .checked_add(FACE_DATA_OFFSET)
+            .and_then(|offset| offset.checked_add(face_index.checked_mul(4 * width)?))
+            .and_then(|offset| offset.checked_add(3 * width))
+            .ok_or(Error::OutOfBounds {
+                offset: data.offset,
+                end: u64::MAX,
+                bound: bytes.len() as u64,
+            })?;
+        let end = offset.checked_add(width).ok_or(Error::OutOfBounds {
+            offset: offset as u64,
+            end: u64::MAX,
+            bound: bytes.len() as u64,
+        })?;
+        if end > data_end {
+            return Err(Error::Truncated {
+                offset: offset as u64,
+                needed: width,
+            });
+        }
+        let replacement = match width {
+            1 => vec![u8::try_from(*fourth).map_err(|_| Error::Unsupported {
+                capability: "patching a mesh writer output with an oversized u8 index",
+            })?],
+            2 => u16::try_from(*fourth)
+                .map_err(|_| Error::Unsupported {
+                    capability: "patching a mesh writer output with an oversized u16 index",
+                })?
+                .to_le_bytes()
+                .to_vec(),
+            4 => fourth.to_le_bytes().to_vec(),
+            _ => unreachable!(),
+        };
+        direct_changes.push((
+            offset - start,
+            bytes[offset..end].to_vec(),
+            replacement.clone(),
+        ));
+        bytes[offset..end].copy_from_slice(&replacement);
+    }
+    let checksum_end = data_end.checked_add(4).ok_or(Error::OutOfBounds {
+        offset: data_end as u64,
+        end: u64::MAX,
+        bound: bytes.len() as u64,
+    })?;
+    if checksum_end > bytes.len() {
+        return Err(Error::Truncated {
+            offset: data_end as u64,
+            needed: 4,
+        });
+    }
+    let face_bytes = usize::try_from(face_count)
+        .ok()
+        .and_then(|count| count.checked_mul(4 * width))
+        .ok_or(Error::OutOfBounds {
+            offset: start as u64,
+            end: u64::MAX,
+            bound: data_end as u64,
+        })?;
+    let mut mapping_tag_offset = start
+        .checked_add(FACE_DATA_OFFSET)
+        .and_then(|offset| offset.checked_add(face_bytes))
+        .ok_or(Error::OutOfBounds {
+            offset: start as u64,
+            end: u64::MAX,
+            bound: data_end as u64,
+        })?;
+    for _ in 0..5 {
+        mapping_tag_offset = skip_mesh_buffer(bytes, mapping_tag_offset, data_end)?;
+    }
+    mapping_tag_offset = mapping_tag_offset
+        .checked_add(4 + 16)
+        .ok_or(Error::OutOfBounds {
+            offset: mapping_tag_offset as u64,
+            end: u64::MAX,
+            bound: data_end as u64,
+        })?;
+    mapping_tag_offset = skip_mesh_buffer(bytes, mapping_tag_offset, data_end)?;
+    let mapping_tag = chunk_at(bytes, mapping_tag_offset, data_end, header.archive_version)?;
+    if mapping_tag.typecode != ANONYMOUS || mapping_tag.short {
+        return Err(Error::Unsupported {
+            capability: "patching a mesh writer output without its mapping tag",
+        });
+    }
+    let original_checksum = u32::from_le_bytes(bytes[data_end..checksum_end].try_into().unwrap());
+    let current_crc_scope = mesh_direct_crc_scope(
+        bytes,
+        start,
+        mapping_tag_offset,
+        mapping_tag,
+        data_end,
+        header.archive_version,
+    )?;
+    let mut original_crc_scope = current_crc_scope.clone();
+    for (offset, previous, _) in direct_changes {
+        let replacement_end = offset
+            .checked_add(previous.len())
+            .ok_or(Error::OutOfBounds {
+                offset: offset as u64,
+                end: u64::MAX,
+                bound: original_crc_scope.len() as u64,
+            })?;
+        if replacement_end > original_crc_scope.len() {
+            return Err(Error::Unsupported {
+                capability: "patching mesh face data outside the class-data checksum scope",
+            });
+        }
+        original_crc_scope[offset..replacement_end].copy_from_slice(&previous);
+    }
+    if crc32fast::hash(&original_crc_scope) != original_checksum {
+        return Err(Error::Decode(
+            "unexpected native mesh checksum scope in bridge writer output".to_owned(),
+        ));
+    }
+    let checksum = crc32fast::hash(&current_crc_scope).to_le_bytes();
+    bytes[data_end..checksum_end].copy_from_slice(&checksum);
+    Ok(())
+}
+
+/// Return precisely the byte ranges Rhino includes in an `ON_Mesh` class-data
+/// CRC. The mapping tag and double-precision vertex cache are intentionally
+/// omitted by the native writer's direct checksum; the trailing bounding box is
+/// included after that omitted cache.
+fn mesh_direct_crc_scope(
+    bytes: &[u8],
+    start: usize,
+    mapping_tag_offset: usize,
+    mapping_tag: Chunk,
+    data_end: usize,
+    archive_version: u32,
+) -> Result<Vec<u8>, Error> {
+    let mut scope = bytes
+        .get(start..mapping_tag_offset)
+        .ok_or(Error::Truncated {
+            offset: start as u64,
+            needed: mapping_tag_offset.saturating_sub(start),
+        })?
+        .to_vec();
+    let mut cursor = usize::try_from(end(mapping_tag.source)?).map_err(|_| Error::OutOfBounds {
+        offset: mapping_tag.source.offset,
+        end: u64::MAX,
+        bound: data_end as u64,
+    })?;
+    let minor = bytes.get(start).copied().ok_or(Error::Truncated {
+        offset: start as u64,
+        needed: 1,
+    })? & 0x0f;
+    let flags_length = 3 + usize::from(minor >= 6) + usize::from(minor >= 7);
+    let flags_end = cursor.checked_add(flags_length).ok_or(Error::OutOfBounds {
+        offset: cursor as u64,
+        end: u64::MAX,
+        bound: data_end as u64,
+    })?;
+    let flags = bytes.get(cursor..flags_end).ok_or(Error::Truncated {
+        offset: cursor as u64,
+        needed: flags_length,
+    })?;
+    scope.extend_from_slice(flags);
+    cursor = flags_end;
+
+    if minor >= 7 {
+        let double_vertex_cache = chunk_at(bytes, cursor, data_end, archive_version)?;
+        if double_vertex_cache.typecode != ANONYMOUS || double_vertex_cache.short {
+            return Err(Error::Unsupported {
+                capability: "patching a mesh writer output without its double-vertex cache",
+            });
+        }
+        cursor =
+            usize::try_from(end(double_vertex_cache.source)?).map_err(|_| Error::OutOfBounds {
+                offset: double_vertex_cache.source.offset,
+                end: u64::MAX,
+                bound: data_end as u64,
+            })?;
+    }
+    if minor >= 8 {
+        const BOUNDING_BOX_BYTES: usize = 6 * std::mem::size_of::<f64>();
+        let bbox_end = cursor
+            .checked_add(BOUNDING_BOX_BYTES)
+            .ok_or(Error::OutOfBounds {
+                offset: cursor as u64,
+                end: u64::MAX,
+                bound: data_end as u64,
+            })?;
+        let bounding_box = bytes.get(cursor..bbox_end).ok_or(Error::Truncated {
+            offset: cursor as u64,
+            needed: BOUNDING_BOX_BYTES,
+        })?;
+        scope.extend_from_slice(bounding_box);
+        cursor = bbox_end;
+    }
+    if cursor != data_end {
+        return Err(Error::Unsupported {
+            capability: "patching a mesh writer output with an unknown class-data suffix",
+        });
+    }
+    Ok(scope)
+}
+
+fn skip_mesh_buffer(bytes: &[u8], offset: usize, bound: usize) -> Result<usize, Error> {
+    let length_end = offset.checked_add(4).ok_or(Error::OutOfBounds {
+        offset: offset as u64,
+        end: u64::MAX,
+        bound: bound as u64,
+    })?;
+    if length_end > bound {
+        return Err(Error::Truncated {
+            offset: offset as u64,
+            needed: 4,
+        });
+    }
+    let length = u32::from_le_bytes(bytes[offset..length_end].try_into().unwrap()) as usize;
+    let end = if length == 0 {
+        length_end
+    } else {
+        length_end
+            .checked_add(5 + length)
+            .ok_or(Error::OutOfBounds {
+                offset: offset as u64,
+                end: u64::MAX,
+                bound: bound as u64,
+            })?
+    };
+    if end > bound {
+        return Err(Error::Truncated {
+            offset: offset as u64,
+            needed: end - offset,
+        });
+    }
+    Ok(end)
 }
 
 fn parse_header(bytes: &[u8]) -> Result<File3dmHeader, Error> {
@@ -4133,5 +4456,79 @@ fn source_less_mesh_writes_and_reads_through_native_rust_codec() {
     assert_eq!(document.mesh_views()[0].normals.len(), 3);
     assert_eq!(document.mesh_views()[0].vertex_colors.len(), 3);
     assert_eq!(document.mesh_views()[0].texture_coordinates.len(), 3);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn source_less_quad_mesh_writes_native_quad_wire_arity() {
+    let path = std::env::temp_dir().join(format!(
+        "rhino3dm-rs-quad-mesh-writer-{}.3dm",
+        std::process::id()
+    ));
+    let mut mesh = Mesh::new();
+    for point in [
+        Point3d::new(0.0, 0.0, 0.0),
+        Point3d::new(1.0, 0.0, 0.0),
+        Point3d::new(1.0, 1.0, 0.0),
+        Point3d::new(0.0, 1.0, 0.0),
+    ] {
+        mesh.add_vertex(point);
+    }
+    mesh.add_quad([0, 1, 2, 3]);
+    mesh.write(&path).unwrap();
+
+    let bytes = std::fs::read(&path).unwrap();
+    let header = parse_header(&bytes).unwrap();
+    let archive = scan_archive(&bytes, header.archive_version).unwrap();
+    let class_data = archive
+        .objects
+        .iter()
+        .find(|object| object.geometry_kind == GeometryKind::Mesh)
+        .and_then(|object| object.class_data)
+        .unwrap();
+    let start = class_data.offset as usize;
+    let count = i32::from_le_bytes(bytes[start + 5..start + 9].try_into().unwrap());
+    let index_width = i32::from_le_bytes(bytes[start + 162..start + 166].try_into().unwrap());
+    assert_eq!(count, 1);
+    assert_eq!(index_width, 1);
+    assert_eq!(&bytes[start + 166..start + 170], &[0, 1, 2, 3]);
+
+    let document = File3dm::read(&path).unwrap();
+    assert_eq!(document.mesh_views().len(), 1);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn source_less_quad_mesh_patches_wide_native_face_indices() {
+    let path = std::env::temp_dir().join(format!(
+        "rhino3dm-rs-wide-quad-mesh-writer-{}.3dm",
+        std::process::id()
+    ));
+    let mut mesh = Mesh::new();
+    for index in 0..257 {
+        mesh.add_vertex(Point3d::new(index as f64, 0.0, 0.0));
+    }
+    mesh.add_quad([253, 254, 255, 256]);
+    mesh.write(&path).unwrap();
+
+    let bytes = std::fs::read(&path).unwrap();
+    let header = parse_header(&bytes).unwrap();
+    let archive = scan_archive(&bytes, header.archive_version).unwrap();
+    let class_data = archive
+        .objects
+        .iter()
+        .find(|object| object.geometry_kind == GeometryKind::Mesh)
+        .and_then(|object| object.class_data)
+        .unwrap();
+    let start = class_data.offset as usize;
+    let index_width = i32::from_le_bytes(bytes[start + 162..start + 166].try_into().unwrap());
+    assert_eq!(index_width, 2);
+    assert_eq!(
+        &bytes[start + 166..start + 174],
+        &[253, 0, 254, 0, 255, 0, 0, 1]
+    );
+
+    let document = File3dm::read(&path).unwrap();
+    assert_eq!(document.mesh_views().len(), 1);
     std::fs::remove_file(path).unwrap();
 }

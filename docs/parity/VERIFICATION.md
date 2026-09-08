@@ -72,8 +72,13 @@ meshes. Deterministic undirected topology edges and edge lines are derived
 from valid triangle/quad faces. A bounded `PointCloud` core supports point
 addition, count, indexed query, and clear, but its optional normal/color/
 hidden/value item channels are not yet integrated. `Mesh::write` now emits a
-standalone native mesh with normals, UVs, and colors; a Rust-written quad is
-read by Python as two triangles, four vertices, four colors, and four normals.
+standalone native mesh with normals, UVs, and colors. Its Rust-authored quad
+path writes Rhino's native four-index face form and recomputes the exact
+class-data checksum scope; Python 8.17.0 reads it as one quad (zero triangles),
+with four vertices, four colors, and four normals. This writer is deliberately
+limited to source-less Rust meshes: imported mesh projections still expose the
+bridge's triangle view and cannot yet be written back without losing native
+source topology.
 The Python 8.17.0 `Hide`/`Show` mesh-vertex probe produced no observable state
 change, so hidden-state parity remains an explicit unresolved runtime finding.
 
