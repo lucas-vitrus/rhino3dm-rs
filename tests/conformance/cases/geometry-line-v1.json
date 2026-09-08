@@ -1,0 +1,33 @@
+{
+  "schema": "rhino3dm-rs.conformance-case.v1",
+  "case_id": "geometry.line.v1",
+  "comparison": {
+    "numeric": {
+      "atol": 1e-12,
+      "rtol": 1e-12,
+      "rationale": "Line interpolation and normalized tangent are double-precision derived values; stored endpoints are compared exactly."
+    }
+  },
+  "operations": [
+    {"id": "start", "call": "point3d.new", "args": [1.0, 2.0, 3.0]},
+    {"id": "end", "call": "point3d.new", "args": [4.0, 6.0, 3.0]},
+    {"id": "line", "call": "line.new", "args": [{"ref": "start"}, {"ref": "end"}]},
+    {"id": "direction", "call": "line.direction", "receiver": "line", "args": []},
+    {"id": "length", "call": "line.length", "receiver": "line", "args": []},
+    {"id": "unit_tangent", "call": "line.unit_tangent", "receiver": "line", "args": []},
+    {"id": "valid", "call": "line.is_valid", "receiver": "line", "args": []},
+    {"id": "point_at_start", "call": "line.point_at", "receiver": "line", "args": [0.0]},
+    {"id": "point_at_half", "call": "line.point_at", "receiver": "line", "args": [0.5]},
+    {"id": "point_at_extrapolated", "call": "line.point_at", "receiver": "line", "args": [2.0]},
+    {"id": "translation", "call": "transform.translation", "args": [7.0, 11.0, 13.0]},
+    {"id": "transform_success", "call": "line.transform", "receiver": "line", "args": [{"ref": "translation"}]},
+    {"id": "replacement_start", "call": "point3d.new", "args": [8.0, 9.0, 10.0]},
+    {"id": "replacement_end", "call": "point3d.new", "args": [11.0, 13.0, 10.0]},
+    {"id": "set_from", "call": "line.set_endpoint", "receiver": "line", "args": ["From", {"ref": "replacement_start"}]},
+    {"id": "set_to", "call": "line.set_endpoint", "receiver": "line", "args": ["To", {"ref": "replacement_end"}]},
+    {"id": "degenerate", "call": "line.new", "args": [{"ref": "replacement_start"}, {"ref": "replacement_start"}]},
+    {"id": "degenerate_valid", "call": "line.is_valid", "receiver": "degenerate", "args": []},
+    {"id": "degenerate_tangent", "call": "line.unit_tangent", "receiver": "degenerate", "args": []}
+  ],
+  "observe": ["direction", "length", "unit_tangent", "valid", "point_at_start", "point_at_half", "point_at_extrapolated", "transform_success", "line", "degenerate_valid", "degenerate_tangent"]
+}

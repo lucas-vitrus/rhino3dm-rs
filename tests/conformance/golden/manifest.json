@@ -1,0 +1,67 @@
+{
+  "schema": "rhino3dm-rs.conformance-golden-manifest.v1",
+  "oracle": {
+    "lock": "../../../docs/parity/oracle-lock.json#primary",
+    "distribution": "rhino3dm",
+    "distribution_version": "8.32.1",
+    "observed_runtime_version": "8.32.2"
+  },
+  "cases": [
+    {
+      "case_id": "math.basics-and-composition.v1",
+      "case": "../cases/math-basics-v1.json",
+      "case_sha256": "b430d6200127443c266a23a825f151059d4265ad63f277fb26de8c4a1b13bfb1",
+      "oracle_result": "math-basics-v1.python-8.32.1.json",
+      "oracle_result_sha256": "b9fb9346de84a3b4578ca03dc78cf18b342ba830796ae0ff9d137251c3dde4d1"
+    },
+    {
+      "case_id": "math.operations-and-boundaries.v1",
+      "case": "../cases/math-operations-and-boundaries-v1.json",
+      "case_sha256": "163746a8462acc3f35ba56e125d72f673fcc804684548a0212e7ad31fc5c6148",
+      "oracle_result": "math-operations-and-boundaries-v1.python-8.32.1.json",
+      "oracle_result_sha256": "781d1ea61cad146fff4651d39ee5964f2a1d1e18ee083051ba230e17e3ae5993"
+    },
+    {
+      "case_id": "math.value-object-state.v1",
+      "case": "../cases/math-value-object-state-v1.json",
+      "case_sha256": "efaf24917904861254849b6517456c7a0cad83b262d3bf1013b3cfcbc02a6b54",
+      "oracle_result": "math-value-object-state-v1.python-8.32.1.json",
+      "oracle_result_sha256": "88a34f536864b1f899c749f82de9395d645be21c7b83e11a8be31faf6fbb777a"
+    },
+    {
+      "case_id": "foundation.2d-and-interval.v1",
+      "case": "../cases/foundation-2d-and-interval-v1.json",
+      "case_sha256": "4e5a7159f6172b316c16c30bb7b81638195fab6f2f26d6599dea3ef96604f6f1",
+      "oracle_result": "foundation-2d-and-interval-v1.python-8.32.1.json",
+      "oracle_result_sha256": "cf9d7094c2f063f62214120a7191b65fafb5a257f5f3b9870e889e7689ebd8e8"
+    },
+    {
+      "case_id": "foundation.point3f.v1",
+      "case": "../cases/foundation-point3f-v1.json",
+      "case_sha256": "f6fa5fdf1bfd6b8725cef027a08b2fce8e55bb1ec6d15c20f453b943482fde01",
+      "oracle_result": "foundation-point3f-v1.python-8.32.1.json",
+      "oracle_result_sha256": "c21ca348e7ededa4572cf1965830b380f034369ab930038a4ae8f6e5fed644c5"
+    },
+    {
+      "case_id": "foundation.vector3f.v1",
+      "case": "../cases/foundation-vector3f-v1.json",
+      "case_sha256": "05ceeef4118bf6263633de8d95314a65df996a3656d0111e1b2b9c56a22a500b",
+      "oracle_result": "foundation-vector3f-v1.python-8.32.1.json",
+      "oracle_result_sha256": "3be286dae71f4e716644d6b485b0a9493808d26b742951eb3ebf1d83dfa3f918"
+    },
+    {
+      "case_id": "foundation.point4d.v1",
+      "case": "../cases/foundation-point4d-v1.json",
+      "case_sha256": "020eda9556cf9d7643424e595dcb61312b5641f416053332c7ab47a4fd3077c5",
+      "oracle_result": "foundation-point4d-v1.python-8.32.1.json",
+      "oracle_result_sha256": "faddd671cdcf67c734c8f7ba239f532370b37c8bdc58db95f13ad69e6e3400af"
+    },
+    {
+      "case_id": "geometry.line.v1",
+      "case": "../cases/geometry-line-v1.json",
+      "case_sha256": "644d9458e161d003b26397d1e68e2f253293603185e292342bb95977047cde0f",
+      "oracle_result": "geometry-line-v1.python-8.32.1.json",
+      "oracle_result_sha256": "dbc3feda9396ae4e347ff1f82a7d605ea09d9490bf161062d62ca982ffdf6fec"
+    }
+  ]
+}

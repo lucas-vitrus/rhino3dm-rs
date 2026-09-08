@@ -1,0 +1,616 @@
+{
+  "schema": "rhino3dm-rs.operation-overrides.v1",
+  "operations": {
+    "py-8-32-1.point3d.distanceto.method": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Point3d::distance_to",
+      "acceptance_case_ids": ["math.basics-and-composition.v1"],
+      "notes": "Checked against the pinned runtime by the paired conformance case."
+    },
+    "py-8-32-1.point3d.transform.method": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Point3d::transformed",
+      "acceptance_case_ids": ["math.basics-and-composition.v1"],
+      "notes": "The runtime returns a transformed point while the shipped stub incorrectly declares None; behavior is verified against the runtime."
+    },
+    "py-8-32-1.transform.identity.runtime": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::identity",
+      "acceptance_case_ids": ["math.basics-and-composition.v1"],
+      "notes": "Runtime-only member because the shipped stub omits this static method."
+    },
+    "py-8-32-1.transform.multiply.runtime": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::multiply",
+      "acceptance_case_ids": ["math.basics-and-composition.v1"],
+      "notes": "Noncommuting composition order is exercised in the paired case."
+    },
+    "py-8-32-1.transform.translation.overload-1": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::python_translation_vector",
+      "acceptance_case_ids": ["math.basics-and-composition.v1"],
+      "notes": "The compatibility entry point preserves the pinned binding's observed f32 narrowing; native Rust callers should use translation_vector."
+    },
+    "py-8-32-1.transform.translation.overload-2": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::translation",
+      "acceptance_case_ids": ["math.basics-and-composition.v1"],
+      "notes": "Checked against the pinned runtime by the paired conformance case."
+    },
+    "py-8-32-1.vector3d.length.runtime": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Vector3d::length",
+      "acceptance_case_ids": ["math.basics-and-composition.v1"],
+      "notes": "Runtime-only member because the shipped stub omits it."
+    },
+    "py-8-32-1.vector3d.unitize.runtime": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Vector3d::unitize",
+      "acceptance_case_ids": ["math.basics-and-composition.v1"],
+      "notes": "The paired case observes mutation through the original vector binding."
+    },
+    "py-8-32-1.point3d.init.method": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Point3d::new",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Three-coordinate construction is exercised as the source of the point arithmetic and transform probes."
+    },
+    "py-8-32-1.point3d.add.overload-1": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Point3d::add_point",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Runtime-only overload split from pybind's generated callable documentation."
+    },
+    "py-8-32-1.point3d.add.overload-2": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Point3d::add_vector",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Runtime-only overload split from pybind's generated callable documentation."
+    },
+    "py-8-32-1.point3d.mul.overload-1": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Point3d::scaled",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Only the scalar overload is covered. The separately ledgered Transform operand overload remains incomplete."
+    },
+    "py-8-32-1.vector3d.init.method": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Vector3d::new",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Three-coordinate construction is exercised before static and instance vector operations."
+    },
+    "py-8-32-1.vector3d.dotproduct.runtime": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Vector3d::dot_product",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Runtime-only member because the shipped stub omits it."
+    },
+    "py-8-32-1.vector3d.crossproduct.runtime": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Vector3d::cross_product",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Runtime-only member because the shipped stub omits it."
+    },
+    "py-8-32-1.vector3d.isparallelto.overload-1": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Vector3d::is_parallel_to",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Covers parallel, antiparallel, zero-vector, and default one-degree tolerance behavior."
+    },
+    "py-8-32-1.vector3d.isparallelto.overload-2": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Vector3d::is_parallel_to_with_tolerance",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Covers an explicit tolerance that rejects the same near-parallel vector accepted by the default."
+    },
+    "py-8-32-1.vector3d.vectorangle.overload-1": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Vector3d::vector_angle",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Covers a right angle and the OpenNURBS unset-value result for a zero operand. Plane and normal overloads remain incomplete."
+    },
+    "py-8-32-1.transform.init.overload-1": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::diagonal",
+      "acceptance_case_ids": ["math.basics-and-composition.v1"],
+      "notes": "The one-number diagonal constructor is checked for ordinary and singular values. Copy construction remains incomplete."
+    },
+    "py-8-32-1.transform.determinant.runtime": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::determinant",
+      "acceptance_case_ids": ["math.basics-and-composition.v1", "math.operations-and-boundaries.v1"],
+      "notes": "Covers composition, inversion, singular and unset matrices."
+    },
+    "py-8-32-1.transform.isaffine.property-getter": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::is_affine",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Covers affine, transposed non-affine and invalid unset matrices."
+    },
+    "py-8-32-1.transform.isidentity.property-getter": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::is_identity",
+      "acceptance_case_ids": ["math.basics-and-composition.v1", "math.operations-and-boundaries.v1"],
+      "notes": "Observed for identity, nonidentity, singular and unset transforms."
+    },
+    "py-8-32-1.transform.islinear.property-getter": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::is_linear",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Observed for identity, zero, translation, rotation and non-affine transpose states."
+    },
+    "py-8-32-1.transform.isrotation.property-getter": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::is_rotation",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Covers identity and a quarter-turn as true rotations, plus nonrotation states."
+    },
+    "py-8-32-1.transform.isvalid.property-getter": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::is_valid",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Covers ordinary finite transforms and the non-finite Unset sentinel."
+    },
+    "py-8-32-1.transform.iszero.property-getter": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::is_zero",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Covers ZeroTransformation and nonzero transforms."
+    },
+    "py-8-32-1.transform.iszero4x4.property-getter": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::is_zero_4x4",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Covers the distinction between ZeroTransformation and an all-zero 4x4 matrix."
+    },
+    "py-8-32-1.transform.iszerotransformation.property-getter": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::is_zero_transformation",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Covers the affine zero transform and nonzero/non-affine transforms."
+    },
+    "py-8-32-1.transform.rotation.overload-1": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::try_rotation_axis_angle",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Axis-angle rotation around a point is checked by matrix, predicates and point transformation. Direction-to-direction rotation remains incomplete."
+    },
+    "py-8-32-1.transform.transpose.method": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::transpose",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Checks every coefficient of a translated transform and resulting predicates."
+    },
+    "py-8-32-1.transform.tofloatarray.method": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::to_float_array",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Both row-dominant and column-dominant layout outputs are compared for a translated transform."
+    },
+    "py-8-32-1.transform.trygetinverse.method": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::python_try_get_inverse",
+      "acceptance_case_ids": ["math.basics-and-composition.v1"],
+      "notes": "The pinned runtime returns a Transform despite the shipped stub's out-parameter signature; both invertible and singular inputs are checked."
+    },
+    "py-8-32-1.transform.unset.runtime": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::unset",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "The explicit tagged non-finite matrix representation preserves the runtime sentinel in JSON conformance results."
+    },
+    "py-8-32-1.transform.zerotransformation.runtime": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Transform::zero_transformation",
+      "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
+      "notes": "Checks the static zero-transform factory and all observable predicate distinctions."
+    },
+    "py-8-32-1.point3d.encode.runtime": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Point3d::encode",
+      "acceptance_case_ids": ["math.value-object-state.v1"],
+      "notes": "Checks ordinary and unset coordinate mappings exactly."
+    },
+    "py-8-32-1.point3d.unset.property-getter": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Point3d::unset",
+      "acceptance_case_ids": ["math.value-object-state.v1"],
+      "notes": "Checks the exact OpenNURBS finite unset sentinel in coordinates and Encode output."
+    },
+    "py-8-32-1.point3d.eq.runtime": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "<Point3d as PartialEq>::eq",
+      "acceptance_case_ids": ["math.value-object-state.v1"],
+      "notes": "Checks equal and unequal coordinate triples."
+    },
+    "py-8-32-1.point3d.ne.runtime": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "!<Point3d as PartialEq>::eq",
+      "acceptance_case_ids": ["math.value-object-state.v1"],
+      "notes": "Checks the Python inequality operator independently of equality."
+    },
+    "py-8-32-1.vector3d.encode.runtime": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "Vector3d::encode",
+      "acceptance_case_ids": ["math.value-object-state.v1"],
+      "notes": "Checks mutable coordinate serialization exactly."
+    },
+    "py-8-32-1.vector3d.eq.runtime": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "<Vector3d as PartialEq>::eq",
+      "acceptance_case_ids": ["math.value-object-state.v1"],
+      "notes": "Checks equal and unequal coordinate triples."
+    },
+    "py-8-32-1.vector3d.ne.runtime": {
+      "status": "passing",
+      "backend": "native",
+      "rust_mapping": "!<Vector3d as PartialEq>::eq",
+      "acceptance_case_ids": ["math.value-object-state.v1"],
+      "notes": "Checks the Python inequality operator independently of equality."
+    },
+    "py-8-32-1.point3d.x.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point3d::x",
+      "acceptance_case_ids": ["math.value-object-state.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.point3d.x.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point3d::x",
+      "acceptance_case_ids": ["math.value-object-state.v1"], "notes": "Writable runtime property omitted by the shipped stub; mutation is observed through Encode."
+    },
+    "py-8-32-1.point3d.y.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point3d::y",
+      "acceptance_case_ids": ["math.value-object-state.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.point3d.y.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point3d::y",
+      "acceptance_case_ids": ["math.value-object-state.v1"], "notes": "Writable runtime property omitted by the shipped stub; mutation is observed through Encode."
+    },
+    "py-8-32-1.point3d.z.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point3d::z",
+      "acceptance_case_ids": ["math.value-object-state.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.point3d.z.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point3d::z",
+      "acceptance_case_ids": ["math.value-object-state.v1"], "notes": "Writable runtime property omitted by the shipped stub; mutation is observed through Encode."
+    },
+    "py-8-32-1.vector3d.x.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector3d::x",
+      "acceptance_case_ids": ["math.value-object-state.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.vector3d.x.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector3d::x",
+      "acceptance_case_ids": ["math.value-object-state.v1"], "notes": "Writable runtime property omitted by the shipped stub; mutation is observed through Encode."
+    },
+    "py-8-32-1.vector3d.y.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector3d::y",
+      "acceptance_case_ids": ["math.value-object-state.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.vector3d.y.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector3d::y",
+      "acceptance_case_ids": ["math.value-object-state.v1"], "notes": "Writable runtime property omitted by the shipped stub; mutation is observed through Encode."
+    },
+    "py-8-32-1.vector3d.z.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector3d::z",
+      "acceptance_case_ids": ["math.value-object-state.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.vector3d.z.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector3d::z",
+      "acceptance_case_ids": ["math.value-object-state.v1"], "notes": "Writable runtime property omitted by the shipped stub; mutation is observed through Encode."
+    },
+    "py-8-32-1.point2d.init.method": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point2d::new",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Two-coordinate construction is checked against the pinned runtime."
+    },
+    "py-8-32-1.point2d.x.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point2d::x",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.point2d.x.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point2d::x",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Writable runtime property is observed through the point and Encode output."
+    },
+    "py-8-32-1.point2d.y.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point2d::y",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.point2d.y.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point2d::y",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Writable runtime property is observed through the point and Encode output."
+    },
+    "py-8-32-1.point2d.encode.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point2d::encode",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Two-coordinate mapping is checked after mutation."
+    },
+    "py-8-32-1.point2d.distanceto.method": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point2d::distance_to",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Euclidean two-dimensional distance is checked against the pinned runtime."
+    },
+    "py-8-32-1.point2d.add.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point2d::add_point",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "The runtime's sole Point2d addition overload is point plus point."
+    },
+    "py-8-32-1.point2d.eq.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "<Point2d as PartialEq>::eq",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Equal and unequal pairs are checked."
+    },
+    "py-8-32-1.point2d.ne.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "!<Point2d as PartialEq>::eq",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Inequality is checked independently of equality."
+    },
+    "py-8-32-1.vector2d.init.method": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector2d::new",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Two-coordinate construction is checked against the pinned runtime."
+    },
+    "py-8-32-1.vector2d.x.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector2d::x",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.vector2d.x.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector2d::x",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Writable runtime property is observed through the vector and Encode output."
+    },
+    "py-8-32-1.vector2d.y.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector2d::y",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.vector2d.y.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector2d::y",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Writable runtime property is observed through the vector and Encode output."
+    },
+    "py-8-32-1.vector2d.encode.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector2d::encode",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Two-coordinate mapping is checked after mutation."
+    },
+    "py-8-32-1.vector2d.eq.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "<Vector2d as PartialEq>::eq",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Equal and unequal pairs are checked."
+    },
+    "py-8-32-1.vector2d.ne.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "!<Vector2d as PartialEq>::eq",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Inequality is checked independently of equality."
+    },
+    "py-8-32-1.interval.init.method": {
+      "status": "passing", "backend": "native", "rust_mapping": "Interval::new",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Descending endpoint construction is preserved exactly."
+    },
+    "py-8-32-1.interval.t0.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Interval::t0",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.interval.t0.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Interval::t0",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Mutation does not normalize endpoint ordering."
+    },
+    "py-8-32-1.interval.t1.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Interval::t1",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.interval.t1.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Interval::t1",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Mutation does not normalize endpoint ordering."
+    },
+    "py-8-32-1.interval.eq.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "<Interval as PartialEq>::eq",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Equal and unequal endpoint pairs are checked."
+    },
+    "py-8-32-1.interval.ne.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "!<Interval as PartialEq>::eq",
+      "acceptance_case_ids": ["foundation.2d-and-interval.v1"], "notes": "Inequality is checked independently of equality."
+    },
+    "py-8-32-1.point3f.init.method": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point3f::new",
+      "acceptance_case_ids": ["foundation.point3f.v1"], "notes": "Construction demonstrates exact f32 storage through the pinned Python binding."
+    },
+    "py-8-32-1.point3f.x.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point3f::x",
+      "acceptance_case_ids": ["foundation.point3f.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.point3f.x.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point3f::x",
+      "acceptance_case_ids": ["foundation.point3f.v1"], "notes": "Mutation remains single precision and is observed through Encode."
+    },
+    "py-8-32-1.point3f.y.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point3f::y",
+      "acceptance_case_ids": ["foundation.point3f.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.point3f.y.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point3f::y",
+      "acceptance_case_ids": ["foundation.point3f.v1"], "notes": "Mutation remains single precision and is observed through Encode."
+    },
+    "py-8-32-1.point3f.z.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point3f::z",
+      "acceptance_case_ids": ["foundation.point3f.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.point3f.z.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point3f::z",
+      "acceptance_case_ids": ["foundation.point3f.v1"], "notes": "Mutation remains single precision and is observed through Encode."
+    },
+    "py-8-32-1.point3f.encode.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point3f::encode",
+      "acceptance_case_ids": ["foundation.point3f.v1"], "notes": "Exact f32 values widened to Python floats are checked before and after mutation."
+    },
+    "py-8-32-1.point3f.add.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point3f::add_point",
+      "acceptance_case_ids": ["foundation.point3f.v1"], "notes": "The runtime's Point3f plus Point3f result is checked at f32 precision."
+    },
+    "py-8-32-1.point3f.eq.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "<Point3f as PartialEq>::eq",
+      "acceptance_case_ids": ["foundation.point3f.v1"], "notes": "Equal and unequal f32 point triples are checked."
+    },
+    "py-8-32-1.point3f.ne.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "!<Point3f as PartialEq>::eq",
+      "acceptance_case_ids": ["foundation.point3f.v1"], "notes": "Inequality is checked independently of equality."
+    },
+    "py-8-32-1.vector3f.init.method": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector3f::new",
+      "acceptance_case_ids": ["foundation.vector3f.v1"], "notes": "Construction demonstrates exact f32 storage through the pinned Python binding."
+    },
+    "py-8-32-1.vector3f.x.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector3f::x",
+      "acceptance_case_ids": ["foundation.vector3f.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.vector3f.x.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector3f::x",
+      "acceptance_case_ids": ["foundation.vector3f.v1"], "notes": "Mutation remains single precision and is observed through Encode."
+    },
+    "py-8-32-1.vector3f.y.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector3f::y",
+      "acceptance_case_ids": ["foundation.vector3f.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.vector3f.y.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector3f::y",
+      "acceptance_case_ids": ["foundation.vector3f.v1"], "notes": "Mutation remains single precision and is observed through Encode."
+    },
+    "py-8-32-1.vector3f.z.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector3f::z",
+      "acceptance_case_ids": ["foundation.vector3f.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.vector3f.z.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector3f::z",
+      "acceptance_case_ids": ["foundation.vector3f.v1"], "notes": "Mutation remains single precision and is observed through Encode."
+    },
+    "py-8-32-1.vector3f.encode.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "Vector3f::encode",
+      "acceptance_case_ids": ["foundation.vector3f.v1"], "notes": "Exact f32 values widened to Python floats are checked before and after mutation."
+    },
+    "py-8-32-1.vector3f.eq.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "<Vector3f as PartialEq>::eq",
+      "acceptance_case_ids": ["foundation.vector3f.v1"], "notes": "Equal and unequal f32 vector triples are checked."
+    },
+    "py-8-32-1.vector3f.ne.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "!<Vector3f as PartialEq>::eq",
+      "acceptance_case_ids": ["foundation.vector3f.v1"], "notes": "Inequality is checked independently of equality."
+    },
+    "py-8-32-1.point4d.init.method": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point4d::new",
+      "acceptance_case_ids": ["foundation.point4d.v1"], "notes": "Four-coordinate construction is checked against the pinned runtime."
+    },
+    "py-8-32-1.point4d.x.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point4d::x",
+      "acceptance_case_ids": ["foundation.point4d.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.point4d.x.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point4d::x",
+      "acceptance_case_ids": ["foundation.point4d.v1"], "notes": "Mutation is observed through the point and Encode output."
+    },
+    "py-8-32-1.point4d.y.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point4d::y",
+      "acceptance_case_ids": ["foundation.point4d.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.point4d.y.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point4d::y",
+      "acceptance_case_ids": ["foundation.point4d.v1"], "notes": "Mutation is observed through the point and Encode output."
+    },
+    "py-8-32-1.point4d.z.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point4d::z",
+      "acceptance_case_ids": ["foundation.point4d.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.point4d.z.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point4d::z",
+      "acceptance_case_ids": ["foundation.point4d.v1"], "notes": "Mutation is observed through the point and Encode output."
+    },
+    "py-8-32-1.point4d.w.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point4d::w",
+      "acceptance_case_ids": ["foundation.point4d.v1"], "notes": "Getter is observed after mutation."
+    },
+    "py-8-32-1.point4d.w.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point4d::w",
+      "acceptance_case_ids": ["foundation.point4d.v1"], "notes": "Mutation is observed through the point and Encode output."
+    },
+    "py-8-32-1.point4d.encode.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "Point4d::encode",
+      "acceptance_case_ids": ["foundation.point4d.v1"], "notes": "All four mutable coordinate values are checked in the encoded mapping."
+    },
+    "py-8-32-1.point4d.eq.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "<Point4d as PartialEq>::eq",
+      "acceptance_case_ids": ["foundation.point4d.v1"], "notes": "Equal and unequal homogeneous coordinates are checked."
+    },
+    "py-8-32-1.point4d.ne.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "!<Point4d as PartialEq>::eq",
+      "acceptance_case_ids": ["foundation.point4d.v1"], "notes": "Inequality is checked independently of equality."
+    },
+    "py-8-32-1.line.init.method": {
+      "status": "passing", "backend": "native", "rust_mapping": "Line::new",
+      "acceptance_case_ids": ["geometry.line.v1"], "notes": "Two Point3d endpoint construction is checked."
+    },
+    "py-8-32-1.line.from.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Line::from",
+      "acceptance_case_ids": ["geometry.line.v1"], "notes": "Endpoint is observed after transform and explicit mutation."
+    },
+    "py-8-32-1.line.from.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Line::from",
+      "acceptance_case_ids": ["geometry.line.v1"], "notes": "Writable endpoint mutation is observed in the final line state."
+    },
+    "py-8-32-1.line.to.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Line::to",
+      "acceptance_case_ids": ["geometry.line.v1"], "notes": "Endpoint is observed after transform and explicit mutation."
+    },
+    "py-8-32-1.line.to.property-setter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Line::to",
+      "acceptance_case_ids": ["geometry.line.v1"], "notes": "Writable endpoint mutation is observed in the final line state."
+    },
+    "py-8-32-1.line.direction.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Line::direction",
+      "acceptance_case_ids": ["geometry.line.v1"], "notes": "Derived endpoint difference is checked."
+    },
+    "py-8-32-1.line.length.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Line::length",
+      "acceptance_case_ids": ["geometry.line.v1"], "notes": "Euclidean endpoint distance is checked."
+    },
+    "py-8-32-1.line.unittangent.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Line::unit_tangent",
+      "acceptance_case_ids": ["geometry.line.v1"], "notes": "Normalized tangent and degenerate zero tangent are checked."
+    },
+    "py-8-32-1.line.isvalid.property-getter": {
+      "status": "passing", "backend": "native", "rust_mapping": "Line::is_valid",
+      "acceptance_case_ids": ["geometry.line.v1"], "notes": "Finite nondegenerate and degenerate lines are checked."
+    },
+    "py-8-32-1.line.pointat.method": {
+      "status": "passing", "backend": "native", "rust_mapping": "Line::point_at",
+      "acceptance_case_ids": ["geometry.line.v1"], "notes": "Endpoint, midpoint, and extrapolated parameters are checked."
+    },
+    "py-8-32-1.line.transform.runtime": {
+      "status": "passing", "backend": "native", "rust_mapping": "Line::transform",
+      "acceptance_case_ids": ["geometry.line.v1"], "notes": "Successful in-place translation and boolean return are checked."
+    }
+  }
+}

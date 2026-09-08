@@ -1,0 +1,56 @@
+{
+  "schema": "rhino3dm-rs.parity-oracle-lock.v1",
+  "audited_date": "2026-09-07",
+  "rust_baseline": {
+    "repository": "https://github.com/lucas-vitrus/rhino3dm-rs",
+    "commit": "34a8846b01db1d4aa9dafb11ab42f7a09776d30d",
+    "checkout": "/Users/lucas-vitrus/Documents/GitHub/rhino3dm-rs",
+    "legacy_checkout_is_not_the_baseline": "/Users/lucas-vitrus/Documents/GitHub/vitrus-4/vitrus-convert/crates/rhino3dm-rs",
+    "workspace_all_targets_tests": {"passed": 11, "failed": 0},
+    "bridge_versions": {"cadmpeg-codec-rhino": "0.5.5", "cadmpeg-codec-step": "0.5.5", "cadmpeg-ir": "0.5.5"}
+  },
+  "primary": {
+    "distribution": "rhino3dm",
+    "distribution_version": "8.32.1",
+    "observed_runtime_version": "8.32.2",
+    "version_mismatch": "Observed in the official wheel. Match the artifact hash and distribution metadata; do not relabel the installed oracle or infer an upstream tag from runtime_version.",
+    "platform": "CPython 3.10, macOS 15, arm64 (universal2 wheel)",
+    "wheel": {
+      "filename": "rhino3dm-8.32.1-cp310-cp310-macosx_15_0_universal2.whl",
+      "url": "https://files.pythonhosted.org/packages/f6/e6/56827afac64a4f7cc5a241f55c1e3d5783daee57d94a8994148d4527b494/rhino3dm-8.32.1-cp310-cp310-macosx_15_0_universal2.whl",
+      "sha256": "fc2cc4f9ca4d75d5db2de82edb71e94cbb5556f3b0fe942a0461e748b0085acc",
+      "download_hash_verified": true
+    },
+    "source_archive": {
+      "url": "https://files.pythonhosted.org/packages/6f/a4/199102b5d74d90a8cc60d86148732dc1d347362fa7ca4fe5e18f87efed3f/rhino3dm-8.32.1.tar.gz",
+      "sha256": "cc02d9fd08a6a3d26e781dfa2f585f5d70a8a821ddafc59d31b9d81305bdf691",
+      "download_hash_verified": true,
+      "git_tag": null,
+      "note": "GitHub tag 8.32.1 returned 404 during audit. Use this source archive as the release source reference; its exact build-to-wheel correspondence needs P00 verification. The sdist does not contain tests/python."
+    },
+    "inventory": "python-api-8.32.1.json",
+    "stub": {
+      "filename": "rhino3dm-8.32.1.pyi",
+      "sha256": "9ffd410b308896f8d1ea0a22e38ebbd5be385e911bd89469515cdff0c69ce079",
+      "origin": "__init__.pyi extracted from the hash-locked primary wheel"
+    }
+  },
+  "regression": {
+    "distribution_version": "8.17.0",
+    "observed_runtime_version": "8.17.0",
+    "source_commit": "1e0c80e6b9cf7ff3c1579d287e178b21634a2a6d",
+    "opennurbs_submodule_commit": "6c91d229ab561fe21c92ffdd97934c77ff945e0a",
+    "inventory": "python-api-8.17.0.json",
+    "purpose": "Keep existing Clay/public-fixture behavior as a named regression target, not as the latest Python API."
+  },
+  "r06_external_fixture": {
+    "path": "/Users/lucas-vitrus/Documents/GitHub/Vitrus-R4/Vitrus R-05/R06.cannon.3dm",
+    "sha256": "5ecaa195342d55727e42c118d5241f2b7c0e73c710aa2bfab169f7423a735e0e",
+    "redistributable": false,
+    "python_oracle": "8.17.0",
+    "objects": 2511,
+    "geometry_counts": {"Brep": 1040, "NurbsCurve": 673, "InstanceReference": 356, "LineCurve": 229, "PolylineCurve": 61, "PolyCurve": 48, "Point": 38, "ArcCurve": 32, "Extrusion": 25, "TextDot": 4, "DimLinear": 3, "Mesh": 2},
+    "instance_last_row": {"not_bit_exact_affine_count": 36, "max_deviation_from_0001": 1.8070621780539365e-18},
+    "note": "Counts and last-row deviations refreshed during this audit; historical metadata count matches do not establish per-object value parity. Do not commit or overwrite this fixture."
+  }
+}

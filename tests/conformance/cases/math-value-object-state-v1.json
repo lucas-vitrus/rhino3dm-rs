@@ -1,0 +1,50 @@
+{
+  "schema": "rhino3dm-rs.conformance-case.v1",
+  "case_id": "math.value-object-state.v1",
+  "comparison": {
+    "numeric": {
+      "atol": 0.0,
+      "rtol": 0.0,
+      "rationale": "This case only observes directly stored coordinate values, coordinate encodings, and exact equality. No computed floating-point results are normalized."
+    }
+  },
+  "operations": [
+    {"id": "point", "call": "point3d.new", "args": [1.0, 2.0, 3.0]},
+    {"id": "point_same", "call": "point3d.new", "args": [1.0, 2.0, 3.0]},
+    {"id": "point_different", "call": "point3d.new", "args": [1.0, 2.0, 4.0]},
+    {"id": "point_equal", "call": "point3d.equals", "receiver": "point", "args": [{"ref": "point_same"}]},
+    {"id": "point_not_equal", "call": "point3d.equals", "receiver": "point", "args": [{"ref": "point_different"}]},
+    {"id": "point_inequality", "call": "point3d.not_equals", "receiver": "point", "args": [{"ref": "point_different"}]},
+    {"id": "point_set_x", "call": "point3d.set_coordinate", "receiver": "point", "args": ["X", 7.25]},
+    {"id": "point_set_y", "call": "point3d.set_coordinate", "receiver": "point", "args": ["Y", -1.0]},
+    {"id": "point_set_z", "call": "point3d.set_coordinate", "receiver": "point", "args": ["Z", 0.0]},
+    {"id": "point_encoded", "call": "point3d.encode", "receiver": "point", "args": []},
+    {"id": "point_unset", "call": "point3d.unset", "args": []},
+    {"id": "point_unset_encoded", "call": "point3d.encode", "receiver": "point_unset", "args": []},
+
+    {"id": "vector", "call": "vector3d.new", "args": [1.0, 2.0, 3.0]},
+    {"id": "vector_same", "call": "vector3d.new", "args": [1.0, 2.0, 3.0]},
+    {"id": "vector_different", "call": "vector3d.new", "args": [1.0, 2.0, 4.0]},
+    {"id": "vector_equal", "call": "vector3d.equals", "receiver": "vector", "args": [{"ref": "vector_same"}]},
+    {"id": "vector_not_equal", "call": "vector3d.equals", "receiver": "vector", "args": [{"ref": "vector_different"}]},
+    {"id": "vector_inequality", "call": "vector3d.not_equals", "receiver": "vector", "args": [{"ref": "vector_different"}]},
+    {"id": "vector_set_x", "call": "vector3d.set_coordinate", "receiver": "vector", "args": ["X", 7.25]},
+    {"id": "vector_set_y", "call": "vector3d.set_coordinate", "receiver": "vector", "args": ["Y", -1.0]},
+    {"id": "vector_set_z", "call": "vector3d.set_coordinate", "receiver": "vector", "args": ["Z", 0.0]},
+    {"id": "vector_encoded", "call": "vector3d.encode", "receiver": "vector", "args": []}
+  ],
+  "observe": [
+    "point_equal",
+    "point_not_equal",
+    "point_inequality",
+    "point",
+    "point_encoded",
+    "point_unset",
+    "point_unset_encoded",
+    "vector_equal",
+    "vector_not_equal",
+    "vector_inequality",
+    "vector",
+    "vector_encoded"
+  ]
+}

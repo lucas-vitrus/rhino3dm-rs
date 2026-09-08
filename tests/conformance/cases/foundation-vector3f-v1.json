@@ -1,0 +1,34 @@
+{
+  "schema": "rhino3dm-rs.conformance-case.v1",
+  "case_id": "foundation.vector3f.v1",
+  "comparison": {
+    "numeric": {
+      "atol": 0.0,
+      "rtol": 0.0,
+      "rationale": "The case observes pinned f32 storage exactly after widening values to JSON numbers."
+    }
+  },
+  "operations": [
+    {"id": "precision_vector", "call": "vector3f.new", "args": [0.1, 0.2, 0.3]},
+    {"id": "precision_encoded", "call": "vector3f.encode", "receiver": "precision_vector", "args": []},
+    {"id": "vector", "call": "vector3f.new", "args": [0.1, 0.2, 0.3]},
+    {"id": "vector_same", "call": "vector3f.new", "args": [0.1, 0.2, 0.3]},
+    {"id": "vector_other", "call": "vector3f.new", "args": [1.0, 2.0, 3.0]},
+    {"id": "vector_equal", "call": "vector3f.equals", "receiver": "vector", "args": [{"ref": "vector_same"}]},
+    {"id": "vector_not_equal", "call": "vector3f.equals", "receiver": "vector", "args": [{"ref": "vector_other"}]},
+    {"id": "vector_inequality", "call": "vector3f.not_equals", "receiver": "vector", "args": [{"ref": "vector_other"}]},
+    {"id": "vector_set_x", "call": "vector3f.set_coordinate", "receiver": "vector", "args": ["X", 7.25]},
+    {"id": "vector_set_y", "call": "vector3f.set_coordinate", "receiver": "vector", "args": ["Y", -1.0]},
+    {"id": "vector_set_z", "call": "vector3f.set_coordinate", "receiver": "vector", "args": ["Z", 0.0]},
+    {"id": "vector_encoded", "call": "vector3f.encode", "receiver": "vector", "args": []}
+  ],
+  "observe": [
+    "precision_vector",
+    "precision_encoded",
+    "vector_equal",
+    "vector_not_equal",
+    "vector_inequality",
+    "vector",
+    "vector_encoded"
+  ]
+}

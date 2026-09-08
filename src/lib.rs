@@ -4,18 +4,32 @@
 //! where that improves migration (`File3dm`, `Point3d`, `ObjectAttributes`).
 //! Unsupported data is reported explicitly; it is never decoded as empty data.
 
-use cadmpeg_codec_rhino::RhinoCodec;
+use cadmpeg_codec_rhino::{RhinoArchiveVersion, RhinoCodec, RhinoEncoder};
+use cadmpeg_ir::codec::{EncodeInput, Encoder};
+use cadmpeg_ir::document::CadIr;
+use cadmpeg_ir::ids::{BodyId, PointId, RegionId, ShellId, VertexId};
+use cadmpeg_ir::math::Point3 as IrPoint3;
+use cadmpeg_ir::tessellation::Tessellation;
+use cadmpeg_ir::topology::{Body as IrBody, BodyKind, Point as IrPoint, Region, Shell, Vertex};
+use cadmpeg_ir::units::Units;
 use cadmpeg_ir::{Codec, DecodeOptions};
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::fs::{self, File};
+use std::fs::File;
+use std::io::{Cursor, Read};
 use std::path::Path;
+use std::sync::Arc;
 
 pub mod scene;
 pub mod step;
 
 pub const FILE_SIGNATURE: &[u8; 24] = b"3D Geometry File Format ";
 const HEADER_LENGTH: usize = 32;
+/// Default upper bound for one retained 3DM source archive (1 GiB).
+///
+/// `File3dm` deliberately retains bytes for checked opaque ranges, so this is
+/// a real resident-memory admission limit rather than merely a read buffer.
+pub const DEFAULT_MAX_SOURCE_BYTES: usize = 1024 * 1024 * 1024;
 const TCODE_SHORT: u32 = 0x8000_0000;
 const TCODE_CRC: u32 = 0x0000_8000;
 const TCODE_END_OF_FILE: u32 = 0x0000_7fff;
@@ -62,10 +76,82 @@ pub struct File3dmHeader {
     pub archive_version: u32,
 }
 
+/// Resource limit applied before a source archive is retained in memory.
+///
+/// Set a larger value explicitly for a known large model. Limits for decoded
+/// strings, records and compressed payloads are separate P01 work and are not
+/// implied by this source-byte admission check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadLimits {
+    pub max_source_bytes: usize,
+}
+
+impl ReadLimits {
+    pub const fn new(max_source_bytes: usize) -> Self {
+        Self { max_source_bytes }
+    }
+}
+
+impl Default for ReadLimits {
+    fn default() -> Self {
+        Self::new(DEFAULT_MAX_SOURCE_BYTES)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SourceRange {
     pub offset: u64,
     pub length: u64,
+}
+
+/// Immutable source bytes retained by a [`File3dm`].
+///
+/// Ranges in the archive index are meaningful only against this store. The
+/// reader keeps exactly one shared allocation, so opaque records can be
+/// inspected without rereading the input or inventing a decoded replacement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceStore {
+    bytes: Arc<[u8]>,
+}
+
+impl SourceStore {
+    fn new(bytes: Arc<[u8]>) -> Self {
+        Self { bytes }
+    }
+
+    /// Entire immutable source archive.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Source archive size in bytes.
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Whether this store is empty.
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// Return a checked slice for an indexed source range.
+    pub fn slice(&self, range: SourceRange) -> Result<&[u8], Error> {
+        let start = usize::try_from(range.offset).map_err(|_| Error::OutOfBounds {
+            offset: range.offset,
+            end: u64::MAX,
+            bound: self.bytes.len() as u64,
+        })?;
+        let end = usize::try_from(end(range)?).map_err(|_| Error::OutOfBounds {
+            offset: range.offset,
+            end: u64::MAX,
+            bound: self.bytes.len() as u64,
+        })?;
+        self.bytes.get(start..end).ok_or(Error::OutOfBounds {
+            offset: range.offset,
+            end: end as u64,
+            bound: self.bytes.len() as u64,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,6 +191,11 @@ pub struct ObjectRecord {
 pub struct ArchiveIndex {
     pub tables: Vec<ArchiveTable>,
     pub objects: Vec<ObjectRecord>,
+    /// One result for every instance-definition table record. A failed parse
+    /// remains inspectable instead of disappearing from the archive index.
+    pub instance_definition_records: Vec<InstanceDefinitionRecord>,
+    /// Successfully decoded definitions, retained for backwards-compatible
+    /// callers. Inspect `instance_definition_records` for failures.
     pub instance_definitions: Vec<InstanceDefinition>,
     pub end_of_file: SourceRange,
 }
@@ -129,6 +220,51 @@ impl ArchiveIndex {
 pub struct File3dm {
     header: File3dmHeader,
     archive: ArchiveIndex,
+    source: SourceStore,
+    /// Mutable document tables used by newly-created documents. Read-only
+    /// archive loading will populate these tables as their codecs become
+    /// available; keeping them separate from the structural index prevents
+    /// edits from masquerading as decoded source data.
+    layers: Vec<Layer>,
+    objects: Vec<PointObject>,
+    meshes: Vec<Tessellation>,
+    mesh_views: Vec<Mesh>,
+    metadata_error: Option<String>,
+}
+
+/// A mutable point object for the first document-object slice.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PointObject {
+    pub geometry: Point3d,
+    pub attributes: ObjectAttributes,
+}
+
+/// A document layer in the Python `rhino3dm.Layer` surface.
+///
+/// This is the first mutable document-table slice. The index is stable within
+/// a document and is assigned by [`File3dm::add_layer`]. More presentation
+/// fields will be added only with oracle-backed cases.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Layer {
+    pub name: String,
+    pub index: i32,
+    pub parent_layer_id: Option<[u8; 16]>,
+    pub id: [u8; 16],
+    pub visible: bool,
+    pub locked: bool,
+}
+
+impl Layer {
+    pub fn new(name: impl Into<String>, id: [u8; 16]) -> Self {
+        Self {
+            name: name.into(),
+            index: -1,
+            parent_layer_id: None,
+            id,
+            visible: true,
+            locked: false,
+        }
+    }
 }
 
 /// Machine-readable coverage gates for consumers that require more than the
@@ -182,6 +318,30 @@ impl GeometryProbe {
 }
 
 impl File3dm {
+    /// Create an empty mutable document.
+    ///
+    /// The returned document is an in-memory authoring model. It is not yet a
+    /// general `.3dm` writer; callers must not treat it as serializable until
+    /// the P03 writer slice lands.
+    pub fn new() -> Self {
+        Self {
+            header: File3dmHeader { archive_version: 8 },
+            archive: ArchiveIndex {
+                tables: Vec::new(),
+                objects: Vec::new(),
+                instance_definition_records: Vec::new(),
+                instance_definitions: Vec::new(),
+                end_of_file: SourceRange::default(),
+            },
+            source: SourceStore::new(Arc::from([])),
+            layers: Vec::new(),
+            objects: Vec::new(),
+            meshes: Vec::new(),
+            mesh_views: Vec::new(),
+            metadata_error: None,
+        }
+    }
+
     /// Coverage of the current public decoder API.
     ///
     /// These flags are deliberately conservative. Opaque preservation inside
@@ -198,15 +358,102 @@ impl File3dm {
 
     /// Read and structurally index a native 3DM file without modifying it.
     pub fn read(path: impl AsRef<Path>) -> Result<Self, Error> {
-        let bytes = fs::read(path)?;
-        let header = parse_header(&bytes)?;
-        let archive = scan_archive(&bytes, header.archive_version)?;
-        Ok(Self { header, archive })
+        Self::read_with_limits(path, ReadLimits::default())
     }
 
+    /// Read and structurally index a native 3DM file under an explicit source
+    /// byte admission limit, without modifying the source file.
+    pub fn read_with_limits(path: impl AsRef<Path>, limits: ReadLimits) -> Result<Self, Error> {
+        let path = path.as_ref();
+        let actual = std::fs::metadata(path)?.len();
+        if actual > limits.max_source_bytes as u64 {
+            return Err(Error::InputTooLarge {
+                limit: limits.max_source_bytes,
+                actual,
+            });
+        }
+        Self::from_bytes_with_limits(std::fs::read(path)?, limits)
+    }
+
+    /// Structurally index retained 3DM bytes without copying them again.
+    pub fn from_bytes(bytes: impl Into<Arc<[u8]>>) -> Result<Self, Error> {
+        Self::from_bytes_with_limits(bytes, ReadLimits::default())
+    }
+
+    /// Structurally index retained 3DM bytes under an explicit source-byte
+    /// admission limit without copying the caller's bytes again.
+    pub fn from_bytes_with_limits(
+        bytes: impl Into<Arc<[u8]>>,
+        limits: ReadLimits,
+    ) -> Result<Self, Error> {
+        let source = SourceStore::new(bytes.into());
+        if source.len() > limits.max_source_bytes {
+            return Err(Error::InputTooLarge {
+                limit: limits.max_source_bytes,
+                actual: source.len() as u64,
+            });
+        }
+        let header = parse_header(source.as_bytes())?;
+        let archive = scan_archive(source.as_bytes(), header.archive_version)?;
+        let objects = archive
+            .objects
+            .iter()
+            .filter_map(|record| {
+                record.point.map(|geometry| PointObject {
+                    geometry,
+                    attributes: record.attributes.clone().unwrap_or_default(),
+                })
+            })
+            .collect();
+        let (layers, mut metadata_error) = match decode_layers(source.as_bytes()) {
+            Ok(layers) => (layers, None),
+            Err(error) => (Vec::new(), Some(error.to_string())),
+        };
+        let meshes = match RhinoCodec.decode(
+            &mut Cursor::new(source.as_bytes()),
+            &DecodeOptions::default(),
+        ) {
+            Ok(decoded) => decoded.ir().model.tessellations.clone(),
+            Err(error) => {
+                let message = format!("mesh projection: {error}");
+                metadata_error = Some(match metadata_error {
+                    Some(existing) => format!("{existing}; {message}"),
+                    None => message,
+                });
+                Vec::new()
+            }
+        };
+        let mesh_views = meshes
+            .iter()
+            .map(|mesh| Mesh {
+                vertices: mesh
+                    .vertices
+                    .iter()
+                    .map(|point| Point3d {
+                        x: point.x,
+                        y: point.y,
+                        z: point.z,
+                    })
+                    .collect(),
+                faces: mesh.triangles.clone(),
+            })
+            .collect();
+        Ok(Self {
+            header,
+            archive,
+            source,
+            layers,
+            objects,
+            meshes,
+            mesh_views,
+            metadata_error,
+        })
+    }
+
+    /// Read only the fixed header required to discover the archive version.
     pub fn read_archive_version(path: impl AsRef<Path>) -> Result<u32, Error> {
-        let bytes = fs::read(path)?;
-        Ok(parse_header(&bytes)?.archive_version)
+        let mut input = File::open(path)?;
+        Ok(read_header(&mut input)?.archive_version)
     }
 
     pub fn archive_version(&self) -> u32 {
@@ -219,6 +466,183 @@ impl File3dm {
 
     pub fn archive(&self) -> &ArchiveIndex {
         &self.archive
+    }
+
+    /// Immutable source storage that owns all archive ranges.
+    pub fn source(&self) -> &SourceStore {
+        &self.source
+    }
+
+    /// Return the exact bytes for a checked source range.
+    pub fn source_slice(&self, range: SourceRange) -> Result<&[u8], Error> {
+        self.source.slice(range)
+    }
+
+    /// Layers in document order.
+    pub fn layers(&self) -> &[Layer] {
+        &self.layers
+    }
+
+    /// Diagnostic from the optional native metadata projection.
+    ///
+    /// Structural archive parsing can succeed while the richer native
+    /// metadata bridge fails. Callers requiring complete layer metadata must
+    /// check this value instead of interpreting an empty layer slice as proof
+    /// that the source had no layers.
+    pub fn metadata_error(&self) -> Option<&str> {
+        self.metadata_error.as_deref()
+    }
+
+    /// Native mesh tessellations decoded by the pure-Rust Rhino bridge.
+    ///
+    /// This is a read projection of source tessellations, not the complete
+    /// mutable `rhino3dm.Mesh` collection API. Native quad/ngon/cache fields
+    /// remain outside this bounded slice.
+    pub fn meshes(&self) -> &[Tessellation] {
+        &self.meshes
+    }
+
+    /// Read-only mesh values with the Python-facing vertex/face shape.
+    pub fn mesh_views(&self) -> &[Mesh] {
+        &self.mesh_views
+    }
+
+    /// Add a layer and return its stable document index.
+    pub fn add_layer(&mut self, mut layer: Layer) -> i32 {
+        let index = self.layers.len() as i32;
+        layer.index = index;
+        self.layers.push(layer);
+        index
+    }
+
+    /// Find a layer by its native UUID bytes.
+    pub fn find_layer(&self, id: [u8; 16]) -> Option<&Layer> {
+        self.layers.iter().find(|layer| layer.id == id)
+    }
+
+    /// Find a mutable layer by its native UUID bytes.
+    pub fn find_layer_mut(&mut self, id: [u8; 16]) -> Option<&mut Layer> {
+        self.layers.iter_mut().find(|layer| layer.id == id)
+    }
+
+    /// Add a point to a newly-created mutable document.
+    ///
+    /// This currently stages the object in the authoring model. Serialization
+    /// is intentionally separate and remains unsupported until the point
+    /// writer has been matched against the pinned Python oracle.
+    pub fn add_point(&mut self, geometry: Point3d, attributes: ObjectAttributes) -> usize {
+        let index = self.objects.len();
+        self.objects.push(PointObject {
+            geometry,
+            attributes,
+        });
+        index
+    }
+
+    pub fn objects(&self) -> &[PointObject] {
+        &self.objects
+    }
+
+    /// Number of mutable point objects in the authoring/document projection.
+    pub fn object_count(&self) -> usize {
+        self.objects.len()
+    }
+
+    /// Return one mutable point object by document index.
+    pub fn object(&self, index: usize) -> Option<&PointObject> {
+        self.objects.get(index)
+    }
+
+    /// Return one mutable point object for in-place geometry/attribute edits.
+    pub fn object_mut(&mut self, index: usize) -> Option<&mut PointObject> {
+        self.objects.get_mut(index)
+    }
+
+    /// Delete one mutable point object and return it when the index existed.
+    pub fn delete_object(&mut self, index: usize) -> Option<PointObject> {
+        (index < self.objects.len()).then(|| self.objects.remove(index))
+    }
+
+    /// Write a minimal native Rhino archive for the supported mutable point
+    /// slice. Metadata, layers, and non-point objects are rejected until their
+    /// wire contracts are implemented and oracle-tested.
+    pub fn write(&self, path: impl AsRef<Path>) -> Result<(), Error> {
+        if !self.source.is_empty() {
+            return Err(Error::Unsupported {
+                capability: "editing and rewriting a decoded archive",
+            });
+        }
+        if !self.layers.is_empty()
+            || self.objects.iter().any(|object| {
+                object.attributes.id.is_some()
+                    || object.attributes.layer_index.is_some()
+                    || !object.attributes.user_strings.is_empty()
+            })
+        {
+            return Err(Error::Unsupported {
+                capability: "serializing layers or point attributes",
+            });
+        }
+        let mut ir = CadIr::empty(Units::default());
+        for (index, object) in self.objects.iter().enumerate() {
+            if !object.geometry.x.is_finite()
+                || !object.geometry.y.is_finite()
+                || !object.geometry.z.is_finite()
+            {
+                return Err(Error::Unsupported {
+                    capability: "a point with non-finite coordinates",
+                });
+            }
+            let point_id = PointId(format!("rhino3dm:object:point#{index}"));
+            ir.model.points.push(IrPoint {
+                id: point_id.clone(),
+                position: IrPoint3::new(object.geometry.x, object.geometry.y, object.geometry.z),
+                source_object: None,
+            });
+            if let Some(name) = object.attributes.name.clone() {
+                let body_id = BodyId(format!("rhino3dm:object:body#{index}"));
+                let region_id = RegionId(format!("rhino3dm:object:region#{index}"));
+                let shell_id = ShellId(format!("rhino3dm:object:shell#{index}"));
+                let vertex_id = VertexId(format!("rhino3dm:object:vertex#{index}"));
+                ir.model.bodies.push(IrBody {
+                    id: body_id.clone(),
+                    kind: BodyKind::General,
+                    regions: vec![region_id.clone()],
+                    transform: None,
+                    name: Some(name),
+                    color: None,
+                    visible: Some(true),
+                });
+                ir.model.regions.push(Region {
+                    id: region_id,
+                    body: body_id,
+                    shells: vec![shell_id.clone()],
+                });
+                ir.model.shells.push(Shell {
+                    id: shell_id,
+                    region: RegionId(format!("rhino3dm:object:region#{index}")),
+                    faces: Vec::new(),
+                    wire_edges: Vec::new(),
+                    free_vertices: vec![vertex_id.clone()],
+                });
+                ir.model.vertices.push(Vertex {
+                    id: vertex_id,
+                    point: point_id,
+                    tolerance: None,
+                });
+            }
+        }
+        let plan = RhinoEncoder::new(RhinoArchiveVersion::V8)
+            .plan(EncodeInput {
+                ir: &ir,
+                fidelity: None,
+            })
+            .map_err(|error| Error::Decode(error.to_string()))?;
+        let mut bytes = Vec::new();
+        plan.write_to(&mut bytes)
+            .map_err(|error| Error::Decode(error.to_string()))?;
+        std::fs::write(path, bytes)?;
+        Ok(())
     }
 
     /// Decode supported curves, Breps, extrusions and meshes through the
@@ -263,11 +687,60 @@ impl File3dm {
     }
 }
 
+impl Default for File3dm {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Point3d {
     pub x: f64,
     pub y: f64,
     pub z: f64,
+}
+
+/// The bounded, read-only mesh projection currently supported by `File3dm`.
+/// Faces are indexed triangles because the native bridge exposes display
+/// tessellation; original quad/ngon ownership remains separately diagnosed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Mesh {
+    pub vertices: Vec<Point3d>,
+    pub faces: Vec<[u32; 3]>,
+}
+
+/// A mutable single-precision point corresponding to Python's
+/// `rhino3dm.Point3f`.
+///
+/// Construction and arithmetic deliberately use `f32`, preserving the
+/// binding's observable narrowing rather than pretending this is a second
+/// double-precision point type.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Point3f {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+/// A mutable homogeneous four-dimensional point corresponding to Python's
+/// `rhino3dm.Point4d`.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Point4d {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub w: f64,
+}
+
+/// A mutable two-dimensional point with the same coordinate precision as
+/// Python's `rhino3dm.Point2d` binding.
+///
+/// Rust exposes fields in its normal `snake_case` style; they correspond to
+/// the Python binding's writable `X` and `Y` properties.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Point2d {
+    pub x: f64,
+    pub y: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -287,10 +760,60 @@ pub struct Vector3d {
     pub z: f64,
 }
 
+/// A mutable single-precision vector corresponding to Python's
+/// `rhino3dm.Vector3f`.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Vector3f {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+/// A mutable two-dimensional vector with the same coordinate precision as
+/// Python's `rhino3dm.Vector2d` binding.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Vector2d {
+    pub x: f64,
+    pub y: f64,
+}
+
+/// A mutable numeric interval corresponding to Python's `rhino3dm.Interval`.
+///
+/// Endpoints are intentionally retained verbatim: descending, degenerate,
+/// non-finite, and NaN intervals are representable by the Python binding and
+/// this value type does not normalize them on construction or mutation.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Interval {
+    pub t0: f64,
+    pub t1: f64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Transform {
     pub matrix: [[f64; 4]; 4],
 }
+
+/// A finite non-degenerate line segment corresponding to Python's
+/// `rhino3dm.Line` value. Endpoints remain mutable; derived values are
+/// calculated from their current coordinates.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Line {
+    pub from: Point3d,
+    pub to: Point3d,
+}
+
+/// An axis-aligned bounding box corresponding to Python's
+/// `rhino3dm.BoundingBox`. Construction retains supplied endpoint order; a
+/// reversed range is invalid instead of being silently normalized.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct BoundingBox {
+    pub min: Point3d,
+    pub max: Point3d,
+}
+
+/// OpenNURBS' public unset sentinel, used by several numeric Python APIs
+/// instead of `NaN` when an operation has no geometrically meaningful value.
+pub const UNSET_VALUE: f64 = -1.234_321_012_343_21e308;
 
 /// The typed payload of `rhino3dm.InstanceReference`.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -310,6 +833,40 @@ pub struct InstanceDefinition {
     pub members: Vec<[u8; 16]>,
 }
 
+/// Parse outcome for one source instance-definition record.
+///
+/// Failed definitions are source facts: consumers can retain, report and later
+/// retry them instead of misreading an incomplete definition table as empty.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstanceDefinitionRecord {
+    pub source: SourceRange,
+    pub definition: Option<InstanceDefinition>,
+    pub error: Option<String>,
+}
+
+/// Coverage of fields in one tagged `ON_3dmObjectAttributes` payload.
+///
+/// `complete` in older releases meant only that the attribute stream had been
+/// consumed. This contract instead describes whether every encountered field
+/// was retained in the public typed representation.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum AttributeCoverage {
+    #[default]
+    Complete,
+    Partial {
+        /// Known field tags that were skipped rather than preserved.
+        skipped_tags: Vec<u8>,
+        /// First unknown tag after which the unread suffix remains opaque.
+        opaque_suffix_from_tag: Option<u8>,
+    },
+}
+
+impl AttributeCoverage {
+    pub const fn is_complete(&self) -> bool {
+        matches!(self, Self::Complete)
+    }
+}
+
 impl Transform {
     pub const IDENTITY: Self = Self {
         matrix: [
@@ -319,6 +876,797 @@ impl Transform {
             [0.0, 0.0, 0.0, 1.0],
         ],
     };
+
+    /// Equivalent to Python's `Transform.Identity()`.
+    pub const fn identity() -> Self {
+        Self::IDENTITY
+    }
+
+    /// Equivalent to Python's `Transform.ZeroTransformation()`.
+    pub const fn zero_transformation() -> Self {
+        Self::diagonal(0.0)
+    }
+
+    /// Equivalent to Python's `Transform.Unset()` sentinel matrix.
+    pub const fn unset() -> Self {
+        Self {
+            matrix: [[f64::NEG_INFINITY; 4]; 4],
+        }
+    }
+
+    /// Equivalent to Python's single-diagonal `Transform(value)` constructor.
+    /// The homogeneous bottom-right entry remains one.
+    pub const fn diagonal(value: f64) -> Self {
+        Self {
+            matrix: [
+                [value, 0.0, 0.0, 0.0],
+                [0.0, value, 0.0, 0.0],
+                [0.0, 0.0, value, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        }
+    }
+
+    /// Equivalent to `Transform.Translation(x, y, z)`.
+    pub const fn translation(x: f64, y: f64, z: f64) -> Self {
+        Self {
+            matrix: [
+                [1.0, 0.0, 0.0, x],
+                [0.0, 1.0, 0.0, y],
+                [0.0, 0.0, 1.0, z],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        }
+    }
+
+    /// Equivalent to `Transform.Translation(Vector3d)`.
+    pub const fn translation_vector(vector: Vector3d) -> Self {
+        Self::translation(vector.x, vector.y, vector.z)
+    }
+
+    /// Reproduce the observed Python binding overload
+    /// `Transform.Translation(Vector3d)`.
+    ///
+    /// The pinned CPython oracle narrows the vector components through a
+    /// 32-bit float before storing the double-precision transform entries.
+    /// That is a binding compatibility behavior, not a useful default for
+    /// new Rust code, so [`Self::translation_vector`] keeps the native f64
+    /// values and this explicit adapter is used by the Python conformance
+    /// surface.
+    pub fn python_translation_vector(vector: Vector3d) -> Self {
+        Self::translation(
+            f64::from(vector.x as f32),
+            f64::from(vector.y as f32),
+            f64::from(vector.z as f32),
+        )
+    }
+
+    /// Standard row-major matrix product, matching `Transform.Multiply(a, b)`.
+    pub fn multiply(self, right: Self) -> Self {
+        let mut matrix = [[0.0; 4]; 4];
+        for (row, output) in matrix.iter_mut().enumerate() {
+            for (column, value) in output.iter_mut().enumerate() {
+                *value = (0..4)
+                    .map(|index| self.matrix[row][index] * right.matrix[index][column])
+                    .sum();
+            }
+        }
+        Self { matrix }
+    }
+
+    /// Determinant of the full 4x4 transform.
+    pub fn determinant(self) -> f64 {
+        // The OpenNURBS binding returns zero rather than propagating NaN when
+        // called on an unset/otherwise invalid matrix.
+        if !self.is_valid() {
+            return 0.0;
+        }
+        let mut matrix = self.matrix;
+        let mut sign = 1.0;
+        let mut determinant = 1.0;
+        for pivot_column in 0..4 {
+            let pivot_row = (pivot_column..4)
+                .max_by(|left, right| {
+                    matrix[*left][pivot_column]
+                        .abs()
+                        .total_cmp(&matrix[*right][pivot_column].abs())
+                })
+                .expect("non-empty 4x4 pivot range");
+            let pivot = matrix[pivot_row][pivot_column];
+            if pivot == 0.0 {
+                return 0.0;
+            }
+            if pivot_row != pivot_column {
+                matrix.swap(pivot_row, pivot_column);
+                sign = -sign;
+            }
+            determinant *= matrix[pivot_column][pivot_column];
+            let pivot_values = matrix[pivot_column];
+            for row in matrix.iter_mut().skip(pivot_column + 1) {
+                let factor = row[pivot_column] / pivot_values[pivot_column];
+                for (value, pivot_value) in row
+                    .iter_mut()
+                    .skip(pivot_column + 1)
+                    .zip(pivot_values.iter().skip(pivot_column + 1))
+                {
+                    *value -= factor * pivot_value;
+                }
+            }
+        }
+        determinant * sign
+    }
+
+    /// Invert this matrix, returning `None` when it is singular or non-finite.
+    pub fn try_inverse(self) -> Option<Self> {
+        if !self.is_valid() {
+            return None;
+        }
+        let mut augmented = [[0.0; 8]; 4];
+        for row in 0..4 {
+            augmented[row][..4].copy_from_slice(&self.matrix[row]);
+            augmented[row][row + 4] = 1.0;
+        }
+        for pivot_column in 0..4 {
+            let pivot_row = (pivot_column..4).max_by(|left, right| {
+                augmented[*left][pivot_column]
+                    .abs()
+                    .total_cmp(&augmented[*right][pivot_column].abs())
+            })?;
+            if augmented[pivot_row][pivot_column] == 0.0 {
+                return None;
+            }
+            augmented.swap(pivot_row, pivot_column);
+            let pivot = augmented[pivot_column][pivot_column];
+            for value in &mut augmented[pivot_column] {
+                *value /= pivot;
+            }
+            let pivot_values = augmented[pivot_column];
+            for (row_index, row) in augmented.iter_mut().enumerate() {
+                if row_index == pivot_column {
+                    continue;
+                }
+                let factor = row[pivot_column];
+                for (value, pivot_value) in row.iter_mut().zip(pivot_values) {
+                    *value -= factor * pivot_value;
+                }
+            }
+        }
+        let mut matrix = [[0.0; 4]; 4];
+        for row in 0..4 {
+            matrix[row].copy_from_slice(&augmented[row][4..]);
+        }
+        Some(Self { matrix })
+    }
+
+    /// Python's observed one-return `TryGetInverse()` behavior: it supplies
+    /// identity when no inverse is available. Prefer [`Self::try_inverse`] in
+    /// new Rust code when singularity needs to remain explicit.
+    pub fn python_try_get_inverse(self) -> Self {
+        self.try_inverse().unwrap_or(Self::IDENTITY)
+    }
+
+    pub fn is_valid(self) -> bool {
+        self.matrix.iter().flatten().all(|value| value.is_finite())
+    }
+
+    pub fn is_identity(self) -> bool {
+        self.matrix == Self::IDENTITY.matrix
+    }
+
+    /// Exact affine predicate for preserved source coefficients.
+    pub fn is_affine(self) -> bool {
+        self.is_valid() && self.matrix[3] == [0.0, 0.0, 0.0, 1.0]
+    }
+
+    /// Python-compatible affine zero-transform predicate.
+    pub fn is_zero(self) -> bool {
+        self.matrix[..3]
+            .iter()
+            .all(|row| row.iter().all(|value| *value == 0.0))
+    }
+
+    /// Whether all sixteen coefficients are exactly zero.
+    pub fn is_zero_4x4(self) -> bool {
+        self.matrix
+            .iter()
+            .all(|row| row.iter().all(|value| *value == 0.0))
+    }
+
+    /// Equivalent to Python's `Transform.IsZeroTransformation` predicate.
+    pub fn is_zero_transformation(self) -> bool {
+        self.is_affine() && self.is_zero()
+    }
+
+    /// Equivalent to Python's `Transform.IsLinear` predicate.
+    pub fn is_linear(self) -> bool {
+        self.is_affine()
+            && self.matrix[0][3] == 0.0
+            && self.matrix[1][3] == 0.0
+            && self.matrix[2][3] == 0.0
+    }
+
+    /// Whether the linear component is an orientation-preserving orthonormal
+    /// transform. The small tolerance applies to computed rotations; source
+    /// coefficients themselves are never snapped or rewritten.
+    pub fn is_rotation(self) -> bool {
+        const TOLERANCE: f64 = 1e-12;
+        if !self.is_linear() {
+            return false;
+        }
+        let rows = [
+            [self.matrix[0][0], self.matrix[0][1], self.matrix[0][2]],
+            [self.matrix[1][0], self.matrix[1][1], self.matrix[1][2]],
+            [self.matrix[2][0], self.matrix[2][1], self.matrix[2][2]],
+        ];
+        let dot = |left: [f64; 3], right: [f64; 3]| {
+            left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
+        };
+        rows.iter()
+            .all(|row| (dot(*row, *row) - 1.0).abs() <= TOLERANCE)
+            && (dot(rows[0], rows[1])).abs() <= TOLERANCE
+            && (dot(rows[0], rows[2])).abs() <= TOLERANCE
+            && (dot(rows[1], rows[2])).abs() <= TOLERANCE
+            && (self.determinant() - 1.0).abs() <= TOLERANCE
+    }
+
+    /// Return the transposed matrix without modifying the source transform.
+    pub fn transpose(self) -> Self {
+        Self {
+            matrix: std::array::from_fn(|row| {
+                std::array::from_fn(|column| self.matrix[column][row])
+            }),
+        }
+    }
+
+    /// Build an axis-angle rotation around a point.
+    ///
+    /// This maps the first runtime overload of Python's
+    /// `Transform.Rotation(angleRadians, rotationAxis, rotationCenter)`. A
+    /// zero or non-finite axis has no defined rotation and returns `None`
+    /// instead of silently manufacturing a transform.
+    pub fn try_rotation_axis_angle(
+        angle_radians: f64,
+        rotation_axis: Vector3d,
+        rotation_center: Point3d,
+    ) -> Option<Self> {
+        if !angle_radians.is_finite()
+            || !rotation_center.x.is_finite()
+            || !rotation_center.y.is_finite()
+            || !rotation_center.z.is_finite()
+        {
+            return None;
+        }
+        let axis_length = rotation_axis.length();
+        if !axis_length.is_finite() || axis_length == 0.0 {
+            return None;
+        }
+        let x = rotation_axis.x / axis_length;
+        let y = rotation_axis.y / axis_length;
+        let z = rotation_axis.z / axis_length;
+        let cosine = angle_radians.cos();
+        let sine = angle_radians.sin();
+        let one_minus_cosine = 1.0 - cosine;
+        let linear = [
+            [
+                cosine + x * x * one_minus_cosine,
+                x * y * one_minus_cosine - z * sine,
+                x * z * one_minus_cosine + y * sine,
+            ],
+            [
+                y * x * one_minus_cosine + z * sine,
+                cosine + y * y * one_minus_cosine,
+                y * z * one_minus_cosine - x * sine,
+            ],
+            [
+                z * x * one_minus_cosine - y * sine,
+                z * y * one_minus_cosine + x * sine,
+                cosine + z * z * one_minus_cosine,
+            ],
+        ];
+        let center = [rotation_center.x, rotation_center.y, rotation_center.z];
+        let offset: [f64; 3] = std::array::from_fn(|row| {
+            center[row]
+                - linear[row][0] * center[0]
+                - linear[row][1] * center[1]
+                - linear[row][2] * center[2]
+        });
+        Some(Self {
+            matrix: [
+                [linear[0][0], linear[0][1], linear[0][2], offset[0]],
+                [linear[1][0], linear[1][1], linear[1][2], offset[1]],
+                [linear[2][0], linear[2][1], linear[2][2], offset[2]],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        })
+    }
+
+    pub fn to_row_major_array(self) -> [f64; 16] {
+        std::array::from_fn(|index| self.matrix[index / 4][index % 4])
+    }
+
+    pub fn to_column_major_array(self) -> [f64; 16] {
+        std::array::from_fn(|index| self.matrix[index % 4][index / 4])
+    }
+
+    /// Equivalent to Python's `Transform.ToFloatArray(rowDominant)` layout
+    /// selection. Values stay f64 in Rust because Python exposes its result
+    /// as Python floats; callers that require an f32 GPU buffer can convert
+    /// explicitly at their API boundary.
+    pub fn to_float_array(self, row_dominant: bool) -> [f64; 16] {
+        if row_dominant {
+            self.to_row_major_array()
+        } else {
+            self.to_column_major_array()
+        }
+    }
+
+    fn apply_homogeneous(self, [x, y, z, w]: [f64; 4]) -> [f64; 4] {
+        std::array::from_fn(|row| {
+            self.matrix[row][0] * x
+                + self.matrix[row][1] * y
+                + self.matrix[row][2] * z
+                + self.matrix[row][3] * w
+        })
+    }
+}
+
+impl Point3d {
+    pub const fn new(x: f64, y: f64, z: f64) -> Self {
+        Self { x, y, z }
+    }
+
+    /// Equivalent to Python's `Point3d.Unset` value.
+    pub const fn unset() -> Self {
+        Self::new(UNSET_VALUE, UNSET_VALUE, UNSET_VALUE)
+    }
+
+    /// Equivalent to Python's `Point3d.Encode()` coordinate mapping.
+    pub fn encode(self) -> BTreeMap<String, f64> {
+        BTreeMap::from([
+            ("X".to_owned(), self.x),
+            ("Y".to_owned(), self.y),
+            ("Z".to_owned(), self.z),
+        ])
+    }
+
+    pub fn distance_to(self, other: Self) -> f64 {
+        ((self.x - other.x).powi(2) + (self.y - other.y).powi(2) + (self.z - other.z).powi(2))
+            .sqrt()
+    }
+
+    /// Equivalent to Python's `Point3d + Point3d` overload.
+    pub fn add_point(self, other: Self) -> Self {
+        Self::new(self.x + other.x, self.y + other.y, self.z + other.z)
+    }
+
+    /// Equivalent to Python's `Point3d + Vector3d` overload.
+    pub fn add_vector(self, vector: Vector3d) -> Self {
+        Self::new(self.x + vector.x, self.y + vector.y, self.z + vector.z)
+    }
+
+    /// Equivalent to Python's scalar `Point3d * value` overload.
+    pub fn scaled(self, value: f64) -> Self {
+        Self::new(self.x * value, self.y * value, self.z * value)
+    }
+
+    /// Return a transformed point without mutating the source, matching the
+    /// observed Python `Point3d.Transform` result behavior.
+    pub fn transformed(self, transform: Transform) -> Self {
+        let [x, y, z, w] = transform.apply_homogeneous([self.x, self.y, self.z, 1.0]);
+        if w != 0.0 {
+            Self::new(x / w, y / w, z / w)
+        } else {
+            Self::new(x, y, z)
+        }
+    }
+}
+
+impl Point3f {
+    /// Equivalent to `Point3f(x, y, z)`.
+    pub const fn new(x: f32, y: f32, z: f32) -> Self {
+        Self { x, y, z }
+    }
+
+    /// Equivalent to Python's `Point3f.Encode()` coordinate mapping.
+    pub fn encode(self) -> BTreeMap<String, f32> {
+        BTreeMap::from([
+            ("X".to_owned(), self.x),
+            ("Y".to_owned(), self.y),
+            ("Z".to_owned(), self.z),
+        ])
+    }
+
+    /// Equivalent to Python's `Point3f + Point3f` overload.
+    pub fn add_point(self, other: Self) -> Self {
+        Self::new(self.x + other.x, self.y + other.y, self.z + other.z)
+    }
+}
+
+impl Point4d {
+    /// Equivalent to `Point4d(x, y, z, w)`.
+    pub const fn new(x: f64, y: f64, z: f64, w: f64) -> Self {
+        Self { x, y, z, w }
+    }
+
+    /// Equivalent to Python's `Point4d.Encode()` coordinate mapping.
+    pub fn encode(self) -> BTreeMap<String, f64> {
+        BTreeMap::from([
+            ("X".to_owned(), self.x),
+            ("Y".to_owned(), self.y),
+            ("Z".to_owned(), self.z),
+            ("W".to_owned(), self.w),
+        ])
+    }
+}
+
+impl Point2d {
+    /// Equivalent to `Point2d(x, y)`.
+    pub const fn new(x: f64, y: f64) -> Self {
+        Self { x, y }
+    }
+
+    /// Equivalent to Python's `Point2d.Encode()` coordinate mapping.
+    pub fn encode(self) -> BTreeMap<String, f64> {
+        BTreeMap::from([("X".to_owned(), self.x), ("Y".to_owned(), self.y)])
+    }
+
+    /// Equivalent to Python's `Point2d.DistanceTo(other)`.
+    pub fn distance_to(self, other: Self) -> f64 {
+        ((self.x - other.x).powi(2) + (self.y - other.y).powi(2)).sqrt()
+    }
+
+    /// Equivalent to Python's `Point2d + Point2d` overload.
+    pub fn add_point(self, other: Self) -> Self {
+        Self::new(self.x + other.x, self.y + other.y)
+    }
+}
+
+impl Vector3d {
+    /// Python's default `IsParallelTo` angle tolerance (one degree).
+    pub const DEFAULT_ANGLE_TOLERANCE: f64 = std::f64::consts::PI / 180.0;
+
+    pub const fn new(x: f64, y: f64, z: f64) -> Self {
+        Self { x, y, z }
+    }
+
+    /// Equivalent to Python's `Vector3d.Encode()` coordinate mapping.
+    pub fn encode(self) -> BTreeMap<String, f64> {
+        BTreeMap::from([
+            ("X".to_owned(), self.x),
+            ("Y".to_owned(), self.y),
+            ("Z".to_owned(), self.z),
+        ])
+    }
+
+    pub fn length(self) -> f64 {
+        (self.x.powi(2) + self.y.powi(2) + self.z.powi(2)).sqrt()
+    }
+
+    /// Normalize in place. Zero vectors remain zero, matching the Python API's
+    /// `None` return / mutation behavior for the tested inputs.
+    pub fn unitize(&mut self) {
+        let length = self.length();
+        if length != 0.0 {
+            self.x /= length;
+            self.y /= length;
+            self.z /= length;
+        }
+    }
+
+    pub fn dot(self, other: Self) -> f64 {
+        self.x * other.x + self.y * other.y + self.z * other.z
+    }
+
+    /// Equivalent to Python's static `Vector3d.DotProduct(a, b)`.
+    pub fn dot_product(left: Self, right: Self) -> f64 {
+        left.dot(right)
+    }
+
+    pub fn cross(self, other: Self) -> Self {
+        Self::new(
+            self.y * other.z - self.z * other.y,
+            self.z * other.x - self.x * other.z,
+            self.x * other.y - self.y * other.x,
+        )
+    }
+
+    /// Equivalent to Python's static `Vector3d.CrossProduct(a, b)`.
+    pub fn cross_product(left: Self, right: Self) -> Self {
+        left.cross(right)
+    }
+
+    /// `1`, `-1` or `0` for parallel, anti-parallel or nonparallel vectors.
+    pub fn is_parallel_to(self, other: Self) -> i32 {
+        self.is_parallel_to_with_tolerance(other, Self::DEFAULT_ANGLE_TOLERANCE)
+    }
+
+    /// Equivalent to Python's `Vector3d.IsParallelTo(other, angleTolerance)`.
+    pub fn is_parallel_to_with_tolerance(self, other: Self, angle_tolerance: f64) -> i32 {
+        let lengths = self.length() * other.length();
+        if lengths == 0.0 {
+            return 0;
+        }
+        let angle = self.cross(other).length().atan2(self.dot(other));
+        if angle <= angle_tolerance {
+            1
+        } else if (std::f64::consts::PI - angle).abs() <= angle_tolerance {
+            -1
+        } else {
+            0
+        }
+    }
+
+    pub fn vector_angle(self, other: Self) -> f64 {
+        let lengths = self.length() * other.length();
+        if lengths == 0.0 {
+            return UNSET_VALUE;
+        }
+        self.cross(other).length().atan2(self.dot(other))
+    }
+}
+
+impl Vector3f {
+    /// Equivalent to `Vector3f(x, y, z)`.
+    pub const fn new(x: f32, y: f32, z: f32) -> Self {
+        Self { x, y, z }
+    }
+
+    /// Equivalent to Python's `Vector3f.Encode()` coordinate mapping.
+    pub fn encode(self) -> BTreeMap<String, f32> {
+        BTreeMap::from([
+            ("X".to_owned(), self.x),
+            ("Y".to_owned(), self.y),
+            ("Z".to_owned(), self.z),
+        ])
+    }
+}
+
+impl Vector2d {
+    /// Equivalent to `Vector2d(x, y)`.
+    pub const fn new(x: f64, y: f64) -> Self {
+        Self { x, y }
+    }
+
+    /// Equivalent to Python's `Vector2d.Encode()` coordinate mapping.
+    pub fn encode(self) -> BTreeMap<String, f64> {
+        BTreeMap::from([("X".to_owned(), self.x), ("Y".to_owned(), self.y)])
+    }
+}
+
+impl Line {
+    /// Equivalent to `Line(start, end)`.
+    pub const fn new(from: Point3d, to: Point3d) -> Self {
+        Self { from, to }
+    }
+
+    /// Equivalent to Python's read-only `Line.Direction` property.
+    pub fn direction(self) -> Vector3d {
+        Vector3d::new(
+            self.to.x - self.from.x,
+            self.to.y - self.from.y,
+            self.to.z - self.from.z,
+        )
+    }
+
+    /// Equivalent to Python's read-only `Line.Length` property.
+    pub fn length(self) -> f64 {
+        let direction = self.direction();
+        let length = direction.length();
+        if length.is_finite() {
+            length
+        } else {
+            0.0
+        }
+    }
+
+    /// Equivalent to Python's read-only `Line.UnitTangent` property.
+    pub fn unit_tangent(self) -> Vector3d {
+        let mut direction = self.direction();
+        if self.is_valid() {
+            direction.unitize();
+        } else {
+            direction = Vector3d::default();
+        }
+        direction
+    }
+
+    /// Equivalent to Python's read-only `Line.IsValid` property.
+    pub fn is_valid(self) -> bool {
+        self.from.x.is_finite()
+            && self.from.y.is_finite()
+            && self.from.z.is_finite()
+            && self.to.x.is_finite()
+            && self.to.y.is_finite()
+            && self.to.z.is_finite()
+            && self.direction().length() > 0.0
+    }
+
+    /// Equivalent to Python's `Line.PointAt(t)`, including extrapolation for
+    /// values outside the segment's `[0, 1]` parameter range.
+    pub fn point_at(self, parameter: f64) -> Point3d {
+        let direction = self.direction();
+        Point3d::new(
+            self.from.x + parameter * direction.x,
+            self.from.y + parameter * direction.y,
+            self.from.z + parameter * direction.z,
+        )
+    }
+
+    /// Transform both endpoints in place. This is equivalent to Python's
+    /// `Line.Transform(xform)`: invalid transforms are rejected without
+    /// changing the line and yield `false`.
+    pub fn transform(&mut self, transform: Transform) -> bool {
+        if !transform.is_valid() {
+            return false;
+        }
+        self.from = self.from.transformed(transform);
+        self.to = self.to.transformed(transform);
+        true
+    }
+}
+
+impl BoundingBox {
+    pub const fn new(min: Point3d, max: Point3d) -> Self {
+        Self { min, max }
+    }
+
+    pub const fn from_coordinates(
+        min_x: f64,
+        min_y: f64,
+        min_z: f64,
+        max_x: f64,
+        max_y: f64,
+        max_z: f64,
+    ) -> Self {
+        Self::new(
+            Point3d::new(min_x, min_y, min_z),
+            Point3d::new(max_x, max_y, max_z),
+        )
+    }
+
+    pub fn is_valid(self) -> bool {
+        [
+            self.min.x, self.min.y, self.min.z, self.max.x, self.max.y, self.max.z,
+        ]
+        .iter()
+        .all(|value| value.is_finite())
+            && self.min.x <= self.max.x
+            && self.min.y <= self.max.y
+            && self.min.z <= self.max.z
+    }
+
+    pub fn diagonal(self) -> Vector3d {
+        Vector3d::new(
+            self.max.x - self.min.x,
+            self.max.y - self.min.y,
+            self.max.z - self.min.z,
+        )
+    }
+
+    pub fn center(self) -> Point3d {
+        Point3d::new(
+            (self.min.x + self.max.x) / 2.0,
+            (self.min.y + self.max.y) / 2.0,
+            (self.min.z + self.max.z) / 2.0,
+        )
+    }
+
+    pub fn area(self) -> f64 {
+        if !self.is_valid() {
+            return 0.0;
+        }
+        let diagonal = self.diagonal();
+        2.0 * (diagonal.x * diagonal.y + diagonal.x * diagonal.z + diagonal.y * diagonal.z)
+    }
+
+    pub fn volume(self) -> f64 {
+        if !self.is_valid() {
+            return 0.0;
+        }
+        let diagonal = self.diagonal();
+        diagonal.x * diagonal.y * diagonal.z
+    }
+
+    pub fn contains(self, point: Point3d) -> bool {
+        self.is_valid()
+            && point.x >= self.min.x
+            && point.x <= self.max.x
+            && point.y >= self.min.y
+            && point.y <= self.max.y
+            && point.z >= self.min.z
+            && point.z <= self.max.z
+    }
+
+    pub fn closest_point(self, point: Point3d) -> Point3d {
+        Point3d::new(
+            point.x.clamp(self.min.x, self.max.x),
+            point.y.clamp(self.min.y, self.max.y),
+            point.z.clamp(self.min.z, self.max.z),
+        )
+    }
+
+    pub fn inflate(&mut self, amounts: Vector3d) {
+        self.min.x -= amounts.x;
+        self.min.y -= amounts.y;
+        self.min.z -= amounts.z;
+        self.max.x += amounts.x;
+        self.max.y += amounts.y;
+        self.max.z += amounts.z;
+    }
+
+    pub fn is_degenerate(self, tolerance: f64) -> i32 {
+        if !self.is_valid() {
+            return 4;
+        }
+        let diagonal = self.diagonal();
+        let threshold = tolerance.max(0.0);
+        [diagonal.x, diagonal.y, diagonal.z]
+            .iter()
+            .filter(|value| **value <= threshold)
+            .count() as i32
+    }
+
+    pub fn union(left: Self, right: Self) -> Self {
+        Self::from_coordinates(
+            left.min.x.min(right.min.x),
+            left.min.y.min(right.min.y),
+            left.min.z.min(right.min.z),
+            left.max.x.max(right.max.x),
+            left.max.y.max(right.max.y),
+            left.max.z.max(right.max.z),
+        )
+    }
+
+    pub fn transform(&mut self, transform: Transform) -> bool {
+        if !transform.is_valid() {
+            return false;
+        }
+        let corners = [
+            Point3d::new(self.min.x, self.min.y, self.min.z),
+            Point3d::new(self.min.x, self.min.y, self.max.z),
+            Point3d::new(self.min.x, self.max.y, self.min.z),
+            Point3d::new(self.min.x, self.max.y, self.max.z),
+            Point3d::new(self.max.x, self.min.y, self.min.z),
+            Point3d::new(self.max.x, self.min.y, self.max.z),
+            Point3d::new(self.max.x, self.max.y, self.min.z),
+            Point3d::new(self.max.x, self.max.y, self.max.z),
+        ]
+        .map(|point| point.transformed(transform));
+        *self = Self::from_coordinates(
+            corners
+                .iter()
+                .map(|point| point.x)
+                .fold(f64::INFINITY, f64::min),
+            corners
+                .iter()
+                .map(|point| point.y)
+                .fold(f64::INFINITY, f64::min),
+            corners
+                .iter()
+                .map(|point| point.z)
+                .fold(f64::INFINITY, f64::min),
+            corners
+                .iter()
+                .map(|point| point.x)
+                .fold(f64::NEG_INFINITY, f64::max),
+            corners
+                .iter()
+                .map(|point| point.y)
+                .fold(f64::NEG_INFINITY, f64::max),
+            corners
+                .iter()
+                .map(|point| point.z)
+                .fold(f64::NEG_INFINITY, f64::max),
+        );
+        true
+    }
+}
+
+impl Interval {
+    /// Equivalent to `Interval(t0, t1)`.
+    pub const fn new(t0: f64, t1: f64) -> Self {
+        Self { t0, t1 }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -328,20 +1676,126 @@ pub struct ObjectAttributes {
     pub name: Option<String>,
     pub layer_index: Option<i32>,
     pub user_strings: Vec<(String, String)>,
+    pub coverage: AttributeCoverage,
+    /// Backwards-compatible shorthand for `coverage.is_complete()`.
+    ///
+    /// This is false whenever even a known field tag was skipped.
     pub complete: bool,
+}
+
+impl ObjectAttributes {
+    /// Create authoring attributes with a caller-supplied native object ID.
+    pub fn with_id(id: [u8; 16]) -> Self {
+        Self {
+            id: Some(id),
+            complete: true,
+            ..Self::default()
+        }
+    }
+
+    /// Return the value of one object UserString key.
+    pub fn get_user_string(&self, key: &str) -> Option<&str> {
+        self.user_strings
+            .iter()
+            .find(|(stored_key, _)| stored_key == key)
+            .map(|(_, value)| value.as_str())
+    }
+
+    /// Insert or replace one object UserString.
+    pub fn set_user_string(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        let key = key.into();
+        let value = value.into();
+        if let Some((_, stored_value)) = self
+            .user_strings
+            .iter_mut()
+            .find(|(stored_key, _)| *stored_key == key)
+        {
+            *stored_value = value;
+        } else {
+            self.user_strings.push((key, value));
+        }
+    }
+
+    /// Remove one object UserString and return whether it existed.
+    pub fn delete_user_string(&mut self, key: &str) -> bool {
+        let before = self.user_strings.len();
+        self.user_strings
+            .retain(|(stored_key, _)| stored_key != key);
+        self.user_strings.len() != before
+    }
+
+    pub const fn is_complete(&self) -> bool {
+        self.coverage.is_complete()
+    }
+
+    fn mark_skipped(&mut self, tag: u8) {
+        self.complete = false;
+        match &mut self.coverage {
+            AttributeCoverage::Complete => {
+                self.coverage = AttributeCoverage::Partial {
+                    skipped_tags: vec![tag],
+                    opaque_suffix_from_tag: None,
+                };
+            }
+            AttributeCoverage::Partial { skipped_tags, .. } => skipped_tags.push(tag),
+        }
+    }
+
+    fn mark_opaque_suffix(&mut self, tag: u8) {
+        self.complete = false;
+        match &mut self.coverage {
+            AttributeCoverage::Complete => {
+                self.coverage = AttributeCoverage::Partial {
+                    skipped_tags: Vec::new(),
+                    opaque_suffix_from_tag: Some(tag),
+                };
+            }
+            AttributeCoverage::Partial {
+                opaque_suffix_from_tag,
+                ..
+            } => {
+                if opaque_suffix_from_tag.is_none() {
+                    *opaque_suffix_from_tag = Some(tag);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
 pub enum Error {
     Io(std::io::Error),
-    Truncated { offset: u64, needed: usize },
+    Truncated {
+        offset: u64,
+        needed: usize,
+    },
     InvalidSignature,
     InvalidArchiveVersion,
-    InvalidChunkLength { offset: u64, length: i64 },
-    OutOfBounds { offset: u64, end: u64, bound: u64 },
-    InvalidTableTerminator { offset: u64 },
+    InputTooLarge {
+        limit: usize,
+        actual: u64,
+    },
+    InvalidChunkLength {
+        offset: u64,
+        length: i64,
+    },
+    CrcMismatch {
+        offset: u64,
+        expected: u32,
+        actual: u32,
+    },
+    OutOfBounds {
+        offset: u64,
+        end: u64,
+        bound: u64,
+    },
+    InvalidTableTerminator {
+        offset: u64,
+    },
     MissingEndOfFile,
-    Unsupported { capability: &'static str },
+    Unsupported {
+        capability: &'static str,
+    },
     Decode(String),
 }
 
@@ -354,9 +1808,21 @@ impl std::fmt::Display for Error {
             }
             Self::InvalidSignature => write!(f, "not a native Rhino 3DM file"),
             Self::InvalidArchiveVersion => write!(f, "3DM header has no valid archive version"),
+            Self::InputTooLarge { limit, actual } => write!(
+                f,
+                "3DM input is {actual} bytes, exceeding the configured {limit}-byte source limit"
+            ),
             Self::InvalidChunkLength { offset, length } => {
                 write!(f, "invalid chunk length {length} at {offset}")
             }
+            Self::CrcMismatch {
+                offset,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "CRC32 mismatch at {offset}: stored {expected:#010x}, calculated {actual:#010x}"
+            ),
             Self::OutOfBounds { offset, end, bound } => {
                 write!(f, "range {offset}..{end} exceeds bound {bound}")
             }
@@ -406,6 +1872,22 @@ fn parse_header(bytes: &[u8]) -> Result<File3dmHeader, Error> {
     Ok(File3dmHeader { archive_version })
 }
 
+fn read_header(input: &mut impl Read) -> Result<File3dmHeader, Error> {
+    let mut bytes = [0_u8; HEADER_LENGTH];
+    let mut read = 0;
+    while read < bytes.len() {
+        let count = input.read(&mut bytes[read..])?;
+        if count == 0 {
+            return Err(Error::Truncated {
+                offset: read as u64,
+                needed: bytes.len() - read,
+            });
+        }
+        read += count;
+    }
+    parse_header(&bytes)
+}
+
 fn scan_archive(bytes: &[u8], archive_version: u32) -> Result<ArchiveIndex, Error> {
     let mut offset = HEADER_LENGTH;
     let comment = chunk_at(bytes, offset, bytes.len(), archive_version)?;
@@ -417,6 +1899,7 @@ fn scan_archive(bytes: &[u8], archive_version: u32) -> Result<ArchiveIndex, Erro
     offset = end(comment.source)? as usize;
     let mut tables = Vec::new();
     let mut objects = Vec::new();
+    let mut instance_definition_records = Vec::new();
     let mut instance_definitions = Vec::new();
     while offset < bytes.len() {
         let chunk = chunk_at(bytes, offset, bytes.len(), archive_version)?;
@@ -424,6 +1907,7 @@ fn scan_archive(bytes: &[u8], archive_version: u32) -> Result<ArchiveIndex, Erro
             return Ok(ArchiveIndex {
                 tables,
                 objects,
+                instance_definition_records,
                 instance_definitions,
                 end_of_file: chunk.source,
             });
@@ -433,12 +1917,17 @@ fn scan_archive(bytes: &[u8], archive_version: u32) -> Result<ArchiveIndex, Erro
                 capability: "a non-table top-level 3DM chunk",
             });
         }
-        let (table, mut table_objects, mut table_definitions) =
+        let (table, mut table_objects, mut table_definition_records) =
             scan_table(bytes, chunk, archive_version)?;
         offset = end(chunk.source)? as usize;
         tables.push(table);
         objects.append(&mut table_objects);
-        instance_definitions.append(&mut table_definitions);
+        instance_definitions.extend(
+            table_definition_records
+                .iter()
+                .filter_map(|record| record.definition.clone()),
+        );
+        instance_definition_records.append(&mut table_definition_records);
     }
     Err(Error::MissingEndOfFile)
 }
@@ -447,10 +1936,17 @@ fn scan_table(
     bytes: &[u8],
     table: Chunk,
     archive_version: u32,
-) -> Result<(ArchiveTable, Vec<ObjectRecord>, Vec<InstanceDefinition>), Error> {
+) -> Result<
+    (
+        ArchiveTable,
+        Vec<ObjectRecord>,
+        Vec<InstanceDefinitionRecord>,
+    ),
+    Error,
+> {
     let mut records = Vec::new();
     let mut objects = Vec::new();
-    let mut instance_definitions = Vec::new();
+    let mut instance_definition_records = Vec::new();
     let mut offset = table.body.offset as usize;
     let table_end = end(table.body)? as usize;
     while offset < table_end {
@@ -468,7 +1964,7 @@ fn scan_table(
                     records,
                 },
                 objects,
-                instance_definitions,
+                instance_definition_records,
             ));
         }
         if without_crc(table.typecode) == TCODE_OBJECTS && child.typecode == TCODE_OBJECT_RECORD {
@@ -477,9 +1973,19 @@ fn scan_table(
         if without_crc(table.typecode) == TCODE_INSTANCE_DEFINITIONS
             && child.typecode == TCODE_INSTANCE_DEFINITION_RECORD
         {
-            if let Ok(definition) = parse_instance_definition(bytes, child, archive_version) {
-                instance_definitions.push(definition);
-            }
+            let definition = match parse_instance_definition(bytes, child, archive_version) {
+                Ok(definition) => InstanceDefinitionRecord {
+                    source: child.source,
+                    definition: Some(definition),
+                    error: None,
+                },
+                Err(error) => InstanceDefinitionRecord {
+                    source: child.source,
+                    definition: None,
+                    error: Some(error.to_string()),
+                },
+            };
+            instance_definition_records.push(definition);
         }
         records.push(ArchiveRecord {
             typecode: child.typecode,
@@ -933,7 +2439,7 @@ fn parse_model_component(
 ///
 /// Tags that require their own nested class decoder intentionally stop parsing
 /// at the containing boundary. The already decoded identity fields remain
-/// valid and `complete` communicates that the suffix is opaque.
+/// valid and [`AttributeCoverage`] describes skipped or opaque data.
 fn parse_attributes(bytes: &[u8], source: SourceRange) -> Result<ObjectAttributes, Error> {
     let mut offset = source.offset as usize;
     let end = end(source)? as usize;
@@ -952,6 +2458,7 @@ fn parse_attributes(bytes: &[u8], source: SourceRange) -> Result<ObjectAttribute
         name: None,
         layer_index: Some(layer_index),
         user_strings: Vec::new(),
+        coverage: AttributeCoverage::Complete,
         complete: true,
     };
     while offset < end {
@@ -961,22 +2468,40 @@ fn parse_attributes(bytes: &[u8], source: SourceRange) -> Result<ObjectAttribute
             1 => attributes.name = Some(read_utf16(bytes, &mut offset, end)?),
             2 => {
                 let _url = read_utf16(bytes, &mut offset, end)?;
+                attributes.mark_skipped(tag);
             }
-            3 | 4 | 10 | 22 => skip(bytes, &mut offset, end, 4)?,
-            6 | 7 => skip(bytes, &mut offset, end, 4)?,
-            20 => skip(bytes, &mut offset, end, 16)?,
-            8 => skip(bytes, &mut offset, end, 8)?,
-            9 | 11..=17 | 19 | 23..=27 => skip(bytes, &mut offset, end, 1)?,
+            3 | 4 | 10 | 22 => {
+                skip(bytes, &mut offset, end, 4)?;
+                attributes.mark_skipped(tag);
+            }
+            6 | 7 => {
+                skip(bytes, &mut offset, end, 4)?;
+                attributes.mark_skipped(tag);
+            }
+            20 => {
+                skip(bytes, &mut offset, end, 16)?;
+                attributes.mark_skipped(tag);
+            }
+            8 => {
+                skip(bytes, &mut offset, end, 8)?;
+                attributes.mark_skipped(tag);
+            }
+            9 | 11..=17 | 19 | 23..=27 => {
+                skip(bytes, &mut offset, end, 1)?;
+                attributes.mark_skipped(tag);
+            }
             18 => {
                 let count = read_i32(bytes, &mut offset, end)?;
                 skip_count(bytes, &mut offset, end, count, 4)?;
+                attributes.mark_skipped(tag);
             }
             21 => {
                 let count = read_i32(bytes, &mut offset, end)?;
                 skip_count(bytes, &mut offset, end, count, 32)?;
+                attributes.mark_skipped(tag);
             }
             _ => {
-                attributes.complete = false;
+                attributes.mark_opaque_suffix(tag);
                 return Ok(attributes);
             }
         }
@@ -1302,6 +2827,23 @@ fn chunk_at_with_class_crc(
             length: value,
         });
     }
+    // Class UUID chunks contain a direct 16-byte payload, so their checksum
+    // scope is unambiguous. Container checksums deliberately exclude complete
+    // nested chunks; validate those only in their owning parsers once the
+    // direct child ranges are known. Treating every CRC chunk as a flat body
+    // corrupts valid object/table checksums.
+    if checksum != 0 && class_uuid {
+        let payload_end = declared_end - checksum;
+        let expected = u32::from_le_bytes(bytes[payload_end..declared_end].try_into().unwrap());
+        let actual = crc32fast::hash(&bytes[header_end..payload_end]);
+        if expected != actual {
+            return Err(Error::CrcMismatch {
+                offset: payload_end as u64,
+                expected,
+                actual,
+            });
+        }
+    }
     Ok(Chunk {
         typecode,
         source: SourceRange {
@@ -1339,6 +2881,72 @@ fn decode_progress(warnings: &[String]) -> (Option<usize>, Option<usize>) {
     };
     (decoded.trim().parse().ok(), source.trim().parse().ok())
 }
+
+fn decode_layers(bytes: &[u8]) -> Result<Vec<Layer>, Error> {
+    let decoded = RhinoCodec
+        .decode(&mut Cursor::new(bytes), &DecodeOptions::default())
+        .map_err(|error| Error::Decode(error.to_string()))?;
+    let Some(namespace) = decoded.ir().native.namespace("rhino") else {
+        return Ok(Vec::new());
+    };
+    let Some(records) = namespace.arenas.get("layers") else {
+        return Ok(Vec::new());
+    };
+    records
+        .iter()
+        .map(|record| {
+            let fields = record.fields();
+            let id = fields
+                .get("source_uuid")
+                .and_then(Value::as_str)
+                .and_then(parse_uuid_bytes)
+                .ok_or_else(|| Error::Decode("Rhino layer record has no valid UUID".into()))?;
+            let name = fields
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            let index = fields
+                .get("archive_index")
+                .and_then(Value::as_i64)
+                .and_then(|value| i32::try_from(value).ok())
+                .unwrap_or(-1);
+            let parent_layer_id = fields
+                .get("parent_uuid")
+                .and_then(Value::as_str)
+                .and_then(parse_uuid_bytes);
+            let visible = fields
+                .get("visible")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            let locked = fields
+                .get("locked")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            Ok(Layer {
+                name,
+                index,
+                parent_layer_id,
+                id,
+                visible,
+                locked,
+            })
+        })
+        .collect()
+}
+
+fn parse_uuid_bytes(value: &str) -> Option<[u8; 16]> {
+    let hex = value.replace('-', "");
+    if hex.len() != 32 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut result = [0_u8; 16];
+    for (index, slot) in result.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).ok()?;
+    }
+    Some(result)
+}
+
 fn end(range: SourceRange) -> Result<u64, Error> {
     range
         .offset
@@ -1353,6 +2961,105 @@ fn end(range: SourceRange) -> Result<u64, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_document_assigns_stable_layer_indices_without_touching_archive_state() {
+        let mut document = File3dm::new();
+        let first = document.add_layer(Layer::new("Base", [1; 16]));
+        let second = document.add_layer(Layer::new("Tools", [2; 16]));
+
+        assert_eq!((first, second), (0, 1));
+        assert_eq!(document.layers()[0].name, "Base");
+        assert_eq!(document.layers()[1].index, 1);
+        assert!(document.archive().tables.is_empty());
+        assert!(document.source().is_empty());
+
+        let object_index =
+            document.add_point(Point3d::new(1.25, 2.5, 3.75), ObjectAttributes::default());
+        assert_eq!(object_index, 0);
+        assert_eq!(
+            document.objects()[0].geometry,
+            Point3d::new(1.25, 2.5, 3.75)
+        );
+        assert_eq!(
+            document.find_layer([1; 16]).map(|layer| layer.index),
+            Some(0)
+        );
+        document.find_layer_mut([2; 16]).expect("second layer").name = "Fixtures".into();
+        assert_eq!(document.layers()[1].name, "Fixtures");
+    }
+
+    #[test]
+    fn object_attributes_preserve_python_style_user_string_mutation_order() {
+        let mut attributes = ObjectAttributes::with_id([7; 16]);
+        attributes.set_user_string("purpose", "calibration");
+        attributes.set_user_string("owner", "robotics");
+        attributes.set_user_string("purpose", "validation");
+        assert_eq!(attributes.get_user_string("purpose"), Some("validation"));
+        assert!(attributes.delete_user_string("owner"));
+        assert!(!attributes.delete_user_string("missing"));
+        assert_eq!(
+            attributes.user_strings,
+            vec![("purpose".into(), "validation".into())]
+        );
+    }
+
+    #[test]
+    fn point_object_collection_supports_indexed_edit_and_delete() {
+        let mut document = File3dm::new();
+        document.add_point(Point3d::new(1.0, 2.0, 3.0), ObjectAttributes::default());
+        document.add_point(Point3d::new(4.0, 5.0, 6.0), ObjectAttributes::default());
+        assert_eq!(document.object_count(), 2);
+        document.object_mut(1).expect("second point").geometry.x = 9.0;
+        assert_eq!(document.object(1).expect("second point").geometry.x, 9.0);
+        assert!(document.delete_object(0).is_some());
+        assert_eq!(document.object_count(), 1);
+        assert_eq!(document.object(0).expect("remaining point").geometry.x, 9.0);
+        assert!(document.delete_object(9).is_none());
+    }
+
+    #[test]
+    fn source_less_point_document_writes_and_reads_back_through_native_reader() {
+        let path = std::env::temp_dir().join(format!(
+            "rhino3dm-rs-point-roundtrip-{}.3dm",
+            std::process::id()
+        ));
+        let mut document = File3dm::new();
+        document.add_point(Point3d::new(1.25, 2.5, 3.75), ObjectAttributes::default());
+        document.write(&path).expect("native point writer");
+
+        let decoded = File3dm::read(&path).expect("native point reader");
+        assert_eq!(decoded.archive().object_count(), 1);
+        assert_eq!(
+            decoded.archive().objects[0].point,
+            Some(Point3d::new(1.25, 2.5, 3.75))
+        );
+        if std::env::var_os("RHINO3DM_RS_KEEP_ROUNDTRIP").is_none() {
+            std::fs::remove_file(path).expect("remove temporary round-trip archive");
+        }
+    }
+
+    #[test]
+    fn named_point_uses_native_free_vertex_object_presentation() {
+        let path = std::env::temp_dir().join(format!(
+            "rhino3dm-rs-named-point-roundtrip-{}.3dm",
+            std::process::id()
+        ));
+        let attributes = ObjectAttributes {
+            name: Some("NamedPoint".into()),
+            ..ObjectAttributes::default()
+        };
+        let mut document = File3dm::new();
+        document.add_point(Point3d::new(4.0, 5.0, 6.0), attributes);
+        document.write(&path).expect("native named point writer");
+        let decoded = File3dm::read(&path).expect("native named point reader");
+        assert_eq!(
+            decoded.objects()[0].attributes.name.as_deref(),
+            Some("NamedPoint")
+        );
+        std::fs::remove_file(path).expect("remove temporary named point archive");
+    }
+
     fn header() -> Vec<u8> {
         let mut bytes = vec![b' '; HEADER_LENGTH];
         bytes[..FILE_SIGNATURE.len()].copy_from_slice(FILE_SIGNATURE);
@@ -1369,6 +3076,11 @@ mod tests {
         let mut bytes = (typecode | TCODE_SHORT).to_le_bytes().to_vec();
         bytes.extend_from_slice(&value.to_le_bytes());
         bytes
+    }
+    fn crc_chunk(typecode: u32, body: &[u8]) -> Vec<u8> {
+        let mut payload = body.to_vec();
+        payload.extend_from_slice(&crc32fast::hash(body).to_le_bytes());
+        long_chunk(typecode, &payload)
     }
     #[test]
     fn structurally_indexes_an_object_table() {
@@ -1389,6 +3101,274 @@ mod tests {
             parse_header(&[0_u8; 32]),
             Err(Error::InvalidSignature)
         ));
+    }
+    #[test]
+    fn retains_source_bytes_and_checks_indexed_ranges() {
+        let mut bytes = header();
+        bytes.extend(long_chunk(1, &[]));
+        let mut object_table = long_chunk(TCODE_OBJECT_RECORD, &[1, 2, 3, 0, 0, 0, 0]);
+        object_table.extend(short_chunk(TCODE_END_OF_TABLE, 0));
+        bytes.extend(long_chunk(TCODE_OBJECTS, &object_table));
+        bytes.extend(long_chunk(TCODE_END_OF_FILE, &[0; 8]));
+
+        let model = File3dm::from_bytes(bytes.clone()).expect("synthetic archive is framed");
+        assert_eq!(model.source().as_bytes(), bytes);
+        assert_eq!(model.source().len(), bytes.len());
+        let record = model.archive().objects.first().expect("one object record");
+        assert_eq!(
+            model
+                .source_slice(record.source)
+                .expect("object source range"),
+            &bytes[record.source.offset as usize..end(record.source).unwrap() as usize]
+        );
+        assert!(matches!(
+            model.source_slice(SourceRange {
+                offset: bytes.len() as u64,
+                length: 1,
+            }),
+            Err(Error::OutOfBounds { .. })
+        ));
+    }
+    #[test]
+    fn refuses_source_bytes_over_the_explicit_limit_before_indexing() {
+        let bytes = header();
+        assert!(matches!(
+            File3dm::from_bytes_with_limits(bytes.clone(), ReadLimits::new(bytes.len() - 1)),
+            Err(Error::InputTooLarge { limit, actual }) if limit == bytes.len() - 1 && actual == bytes.len() as u64
+        ));
+        assert!(matches!(
+            File3dm::from_bytes_with_limits(bytes, ReadLimits::new(HEADER_LENGTH)),
+            Err(Error::Truncated {
+                offset,
+                needed,
+            }) if offset == HEADER_LENGTH as u64 && needed == 12
+        ));
+    }
+    #[test]
+    fn reads_header_from_a_bounded_reader() {
+        let bytes = header();
+        let mut input = &bytes[..];
+        assert_eq!(read_header(&mut input).unwrap().archive_version, 80);
+        assert_eq!(input.len(), 0);
+    }
+    #[test]
+    fn validates_direct_class_uuid_crc() {
+        let uuid = [0xa5; 16];
+        let valid = crc_chunk(CLASS_UUID, &uuid);
+        assert!(chunk_at_with_class_crc(&valid, 0, valid.len(), 80, true).is_ok());
+
+        let mut corrupt = valid;
+        *corrupt.last_mut().unwrap() ^= 1;
+        assert!(matches!(
+            chunk_at_with_class_crc(&corrupt, 0, corrupt.len(), 80, true),
+            Err(Error::CrcMismatch { .. })
+        ));
+    }
+    #[test]
+    fn keeps_native_and_python_vector_translation_contracts_separate() {
+        let vector = Vector3d::new(0.6, 0.8, 0.0);
+        assert_eq!(Transform::translation_vector(vector).matrix[0][3], 0.6);
+        assert_eq!(
+            Transform::python_translation_vector(vector).matrix[0][3],
+            f64::from(0.6_f32)
+        );
+    }
+    #[test]
+    fn math_basics_are_stable_for_native_consumers() {
+        let point = Point3d::new(2.0, 3.0, 5.0);
+        let translation = Transform::translation(7.0, 11.0, 13.0);
+        let scale = Transform::diagonal(2.0);
+        let composed = translation.multiply(scale);
+        assert_eq!(
+            point.transformed(translation),
+            Point3d::new(9.0, 14.0, 18.0)
+        );
+        assert_eq!(point.transformed(composed), Point3d::new(11.0, 17.0, 23.0));
+        let inverse = composed.try_inverse().expect("non-singular transform");
+        let round_trip = point.transformed(composed).transformed(inverse);
+        assert!((round_trip.x - point.x).abs() <= 1e-12);
+        assert!((round_trip.y - point.y).abs() <= 1e-12);
+        assert!((round_trip.z - point.z).abs() <= 1e-12);
+        assert!(Transform::diagonal(0.0).try_inverse().is_none());
+    }
+    #[test]
+    fn matches_foundational_open_nurbs_math_edge_cases() {
+        let point = Point3d::new(2.0, 3.0, 5.0);
+        let vector = Vector3d::new(3.0, 4.0, 0.0);
+        assert_eq!(
+            point.add_point(Point3d::new(7.0, 11.0, 13.0)),
+            Point3d::new(9.0, 14.0, 18.0)
+        );
+        assert_eq!(point.add_vector(vector), Point3d::new(5.0, 7.0, 5.0));
+        assert_eq!(point.scaled(2.0), Point3d::new(4.0, 6.0, 10.0));
+        assert_eq!(point.encode().get("X"), Some(&2.0));
+        assert_eq!(
+            Point3d::unset(),
+            Point3d::new(UNSET_VALUE, UNSET_VALUE, UNSET_VALUE)
+        );
+        assert_eq!(vector.encode().get("Y"), Some(&4.0));
+        assert_eq!(vector.is_parallel_to(Vector3d::new(-3.0, -4.0, 0.0)), -1);
+        assert_eq!(vector.is_parallel_to(Vector3d::default()), 0);
+        assert_eq!(
+            vector.is_parallel_to_with_tolerance(Vector3d::new(3.0, 4.0, 0.001), 1e-4),
+            0
+        );
+        assert_eq!(vector.vector_angle(Vector3d::default()), UNSET_VALUE);
+        let zero = Transform::zero_transformation();
+        assert!(zero.is_zero());
+        assert!(!zero.is_zero_4x4());
+        assert!(zero.is_zero_transformation());
+        assert!(Transform::identity().is_rotation());
+        assert!(Transform::try_rotation_axis_angle(
+            std::f64::consts::FRAC_PI_2,
+            Vector3d::new(0.0, 0.0, 1.0),
+            Point3d::default(),
+        )
+        .unwrap()
+        .is_rotation());
+        assert!(
+            Transform::try_rotation_axis_angle(0.0, Vector3d::default(), Point3d::default())
+                .is_none()
+        );
+        assert!(!Transform::translation(1.0, 0.0, 0.0).is_linear());
+        assert!(!Transform::unset().is_valid());
+        assert_eq!(Transform::unset().determinant(), 0.0);
+        assert_eq!(
+            Transform::translation(7.0, 11.0, 13.0).to_float_array(false),
+            [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 7.0, 11.0, 13.0, 1.0,]
+        );
+    }
+    #[test]
+    fn two_dimensional_values_and_intervals_preserve_python_state_contracts() {
+        let mut point = Point2d::new(1.25, -2.5);
+        let other = Point2d::new(-3.0, 4.0);
+        assert_eq!(point.add_point(other), Point2d::new(-1.75, 1.5));
+        assert!((point.distance_to(other) - 7.766_112_283_504_533).abs() < 1e-12);
+        point.x = 7.25;
+        point.y = -1.0;
+        assert_eq!(point.encode().get("X"), Some(&7.25));
+        assert_eq!(point.encode().get("Y"), Some(&-1.0));
+
+        let mut vector = Vector2d::new(1.0, 2.0);
+        vector.x = 7.25;
+        vector.y = -1.0;
+        assert_eq!(vector.encode(), point.encode());
+
+        let mut interval = Interval::new(5.0, 2.0);
+        interval.t0 = 7.25;
+        interval.t1 = -1.0;
+        assert_eq!(interval, Interval::new(7.25, -1.0));
+    }
+    #[test]
+    fn point3f_retains_single_precision_storage_and_arithmetic() {
+        let mut point = Point3f::new(0.1, 0.2, 0.3);
+        assert_eq!(point.x, 0.1_f32);
+        assert_eq!(
+            point.add_point(Point3f::new(1.0, 2.0, 3.0)),
+            Point3f::new(1.1, 2.2, 3.3)
+        );
+        point.x = 7.25;
+        point.y = -1.0;
+        point.z = 0.0;
+        assert_eq!(point.encode().get("Z"), Some(&0.0));
+
+        let mut vector = Vector3f::new(0.1, 0.2, 0.3);
+        vector.x = 7.25;
+        vector.y = -1.0;
+        vector.z = 0.0;
+        assert_eq!(vector.encode().get("X"), Some(&7.25));
+
+        let mut homogeneous = Point4d::new(0.1, 0.2, 0.3, 0.4);
+        homogeneous.x = 7.25;
+        homogeneous.y = -1.0;
+        homogeneous.z = 0.0;
+        homogeneous.w = 2.0;
+        assert_eq!(homogeneous.encode().get("W"), Some(&2.0));
+
+        let mut line = Line::new(Point3d::new(1.0, 2.0, 3.0), Point3d::new(4.0, 6.0, 3.0));
+        assert!(line.is_valid());
+        assert_eq!(line.direction(), Vector3d::new(3.0, 4.0, 0.0));
+        assert_eq!(line.point_at(2.0), Point3d::new(7.0, 10.0, 3.0));
+        assert!(line.transform(Transform::translation(7.0, 11.0, 13.0)));
+        assert_eq!(line.from, Point3d::new(8.0, 13.0, 16.0));
+        assert!(!Line::new(Point3d::default(), Point3d::default()).is_valid());
+
+        let mut bounds = BoundingBox::from_coordinates(1.0, 2.0, 3.0, 4.0, 6.0, 8.0);
+        assert!(bounds.is_valid());
+        assert_eq!(bounds.center(), Point3d::new(2.5, 4.0, 5.5));
+        assert_eq!(bounds.area(), 94.0);
+        assert_eq!(bounds.volume(), 60.0);
+        assert_eq!(
+            bounds.closest_point(Point3d::new(5.0, 7.0, 9.0)),
+            bounds.max
+        );
+        bounds.inflate(Vector3d::new(1.0, 2.0, 3.0));
+        assert_eq!(bounds.min, Point3d::new(0.0, 0.0, 0.0));
+        assert_eq!(bounds.max, Point3d::new(5.0, 8.0, 11.0));
+    }
+    #[test]
+    fn distinguishes_skipped_and_opaque_attribute_fields() {
+        let mut skipped = vec![0x20];
+        skipped.extend([0; 16]);
+        skipped.extend(3_i32.to_le_bytes());
+        skipped.push(3); // display mode: known width but not retained yet
+        skipped.extend(7_i32.to_le_bytes());
+        skipped.push(0);
+        let attributes = parse_attributes(
+            &skipped,
+            SourceRange {
+                offset: 0,
+                length: skipped.len() as u64,
+            },
+        )
+        .unwrap();
+        assert!(!attributes.complete);
+        assert_eq!(
+            attributes.coverage,
+            AttributeCoverage::Partial {
+                skipped_tags: vec![3],
+                opaque_suffix_from_tag: None,
+            }
+        );
+
+        let mut opaque = vec![0x20];
+        opaque.extend([0; 16]);
+        opaque.extend(3_i32.to_le_bytes());
+        opaque.push(42);
+        let attributes = parse_attributes(
+            &opaque,
+            SourceRange {
+                offset: 0,
+                length: opaque.len() as u64,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            attributes.coverage,
+            AttributeCoverage::Partial {
+                skipped_tags: vec![],
+                opaque_suffix_from_tag: Some(42),
+            }
+        );
+    }
+    #[test]
+    fn retains_failed_instance_definition_records() {
+        let mut bytes = header();
+        bytes.extend(long_chunk(1, &[]));
+        let mut records = long_chunk(TCODE_INSTANCE_DEFINITION_RECORD, &[0; 4]);
+        records.extend(short_chunk(TCODE_END_OF_TABLE, 0));
+        bytes.extend(long_chunk(TCODE_INSTANCE_DEFINITIONS, &records));
+        bytes.extend(long_chunk(TCODE_END_OF_FILE, &[0; 8]));
+
+        let index = scan_archive(&bytes, 80).unwrap();
+        assert!(index.instance_definitions.is_empty());
+        assert_eq!(index.instance_definition_records.len(), 1);
+        let record = &index.instance_definition_records[0];
+        assert!(record.definition.is_none());
+        assert!(record
+            .error
+            .as_deref()
+            .is_some_and(|message| !message.is_empty()));
     }
     #[test]
     fn decodes_v1_instance_reference_prefix() {

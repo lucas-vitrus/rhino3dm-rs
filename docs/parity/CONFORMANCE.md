@@ -1,0 +1,210 @@
+# Conformance, fixtures and performance contracts
+
+Status: executable P00/P02 foundation, updated 2026-09-07. The inventory,
+overload-aware operation ledger, declarative Python/Rust runners, comparator,
+and eight foundational/geometry cases exist today. The ledger has 3,229 obligations, of which 122
+are marked `passing` only after the locked primary oracle and Rust results
+compare. Fuzz targets, document round trips and every remaining operation are
+still required; 122 passing operations do not qualify as package parity.
+
+## Define a measurable denominator
+
+P00 creates one operation obligation for each constructor overload, method
+overload, property getter/setter, enum value and observable collection protocol
+in the pinned Python API. Reconcile runtime exports, binding source, stubs and
+behavior probes. Keep inherited exposure obligations, but deduplicate their
+implementation owner. The current JSON inventory and generated ledger include
+module-level exports, but binding-source pointers and behavior probes still
+need to close the ledger.
+
+The 212 classes and 3,359 public member slots are discovery counts, not the
+denominator of a compatibility score. Do not divide implemented Rust types by
+212. Report coverage by family and operation, plus unresolved discovery entries.
+Treat untested, skipped, stubbed, approximate, unsupported and blocked entries
+as incomplete. A reduced robotics subset may be released under its own name,
+but does not qualify as unqualified Python parity.
+
+Keep four independent dimensions for each operation:
+
+| Dimension | Example states | Proof |
+| --- | --- | --- |
+| API mapping | unassigned, specified, implemented | Python signature/defaults and Rust symbol |
+| Behavior | untested, failing, passing, known-deviation | Versioned differential case IDs and result hashes |
+| Representation / I/O | no-codec, read-only, editable, writable | Read/edit/write fixtures; field coverage |
+| Backend | native, Rust bridge, opaque, missing | Source symbol and feature-disabled build result |
+
+Reading a curve does not prove curve evaluation. Evaluation does not prove
+mutation, serialization or collection aliasing. An opaque retained curve earns
+no curve API coverage. Different operations on one type can have different
+backend and behavior states.
+
+## Case and result protocol
+
+Use versioned JSON requests and results for test runners. Both runners execute
+the same declarative operations; expected values come from the locked oracle,
+not from the current Rust result. The checked-in cases use this schema:
+
+```json
+{
+  "schema": "rhino3dm-rs.conformance-case.v1",
+  "case_id": "point.translation.v1",
+  "comparison": {"numeric": {"atol": 1e-12, "rtol": 1e-12}},
+  "operations": [
+    {"id": "p", "call": "point3d.new", "args": [2, 3, 5]},
+    {"id": "t", "call": "transform.translation", "args": [7, 11, 13]},
+    {"id": "ok", "call": "point3d.transform", "receiver": "p", "args": [{"ref": "t"}]}
+  ],
+  "observe": ["p", "ok"]
+}
+```
+
+Run the real pair with the isolated pinned oracle, then compare results:
+
+```bash
+cargo run --quiet --bin rhino3dm-conformance -- tests/conformance/cases/math-basics-v1.json > /tmp/rust.json
+/path/to/pinned/python tools/parity/run_python_cases.py --expect-distribution 8.32.1 tests/conformance/cases/math-basics-v1.json > /tmp/python.json
+/path/to/pinned/python tools/parity/compare_cases.py --case tests/conformance/cases/math-basics-v1.json --python /tmp/python.json --rust /tmp/rust.json
+
+cargo build --bin rhino3dm-conformance
+/path/to/pinned/python tools/parity/run_conformance_suite.py --oracle-python /path/to/pinned/python
+```
+
+The comparator tests every nonnumeric field and ordering exactly. It permits
+only the case's named numeric tolerance. Current cases include noncommuting
+composition, inversion fallback, vector-to-transform narrowing, zero/unset
+sentinels, vector degeneracy, and axis-angle rotation. Before committing a new
+case, confirm the exact overload and return behavior in the oracle.
+
+Results carry status (`ok`, `failure`, `unsupported`, `runner_error`), return
+value, observed object state, structured failure category, warnings/coverage,
+oracle artifact fingerprint, case hash and runner revision. Unsupported is not
+the same as Python returning None or False. Encode NaN, infinities, unset
+sentinels, UUIDs, tuples and binary arrays using explicit tagged representations
+instead of relying on invalid JSON or lossy strings.
+
+Observe mutation before and after through both the original object and all
+available views. Record ordering, index boundary behavior, deletion, duplicate
+IDs, nil IDs, ownership and cache changes. Test invalid geometry that the oracle
+can represent, not only successful happy paths. Match error meaning; exact
+message text is required only when it is intentionally part of the documented
+compatibility contract.
+
+## Fixture corpus and provenance
+
+Start with small redistributable, single-purpose fixtures generated by the
+locked Python wheel. Store the generator, seed/options, units, source artifact
+hash, fixture SHA-256, expected facts and redistribution provenance. Never
+regenerate goldens automatically during the Rust test run.
+
+| Corpus group | Required variants |
+| --- | --- |
+| Archive | Empty/point models, nested chunks, header truncations, inconsistent sizes, CRC mutations, unknown class/userdata, recovery after one damaged record |
+| Versions | Empirically supported read/write versions; older v2/v3/v4/v5 and modern v6/v7/v8 samples where available; unsupported cases explicit |
+| Math | Asymmetric transforms, noncommuting composition, inverse failures, mirror/nonuniform scale, degeneracies, non-finite/unset values |
+| Document | Units/tolerances, Unicode, attributes and source inheritance, each table, ordered iteration, replacement/deletion, duplicate/nil IDs |
+| Mesh | Native triangle/quad mixtures, empty/invalid faces, float/double vertices, colors/normals/UVs, topology, bounded compressed arrays |
+| Curves | Rational and nonrational NURBS, repeated knots, open/closed/periodic, reversed/domain-edited, polycurves and proxies |
+| BRep | Trimmed face with hole, cylinder seam, sphere pole, open shell, closed solid, invalid adjacency, reversed face, rational surface, extrusions |
+| Instances | At least two nesting levels, reused definitions, mirrored occurrence, missing references, cycles, definition-only members |
+| Appearance | PBR/legacy values, ByParent/ByLayer inheritance, mappings/channels, embedded and missing texture assets, render-content trees |
+| Other | Annotations/styles, dictionaries, viewports/lights/settings, SubD tags and incidence iteration, Draco interoperability |
+
+Not every fixture can be authored by Python. For example, cached BRep display
+meshes may require an existing licensed fixture or a separately authored Rhino
+model; do not call nonexistent `Mesh.CreateFromBrep` to create them. Record the
+authoring tool/version and rights. Missing fixtures remain coverage gaps.
+
+Keep the public structural fixture as a fast regression. Keep R06 external:
+use the exact path/hash in the lock, open it read-only, and write derivatives
+to an isolated output directory. Do not commit the private model, modify it,
+or treat its successful census as a replacement for adversarial fixtures.
+Optional R06 tests clearly report absent input as skipped and do not count
+toward release coverage until the private qualification run is completed.
+
+## Comparison policies
+
+- Compare IDs, topology indices, native face arity, enums, strings, flags,
+  counts, ordering and binary texture payloads exactly where observable.
+- Preserve source floating-point coefficients without unrequested rounding.
+  For lossless decoding, compare exact stored representations when both APIs
+  expose that precision. Separately compare computed results with named,
+  operation-specific absolute/relative tolerances.
+- Start double-precision arithmetic probes with strict tolerances, for example
+  `atol=1e-12` and `rtol=1e-12`, but do not impose those universally. Derive
+  appropriate limits from source precision, units, scale and upstream behavior;
+  commit the justification with the case. Single-precision mesh arrays require
+  a different profile. Never loosen a tolerance just to hide a discrepancy.
+- Evaluate curves/surfaces at endpoints, interior parameters, repeated knots,
+  seam/pole locations and derivative discontinuities. Check domains, weights,
+  topology, orientation and exposed analytic results as well as sample points.
+- Preserve R06's tiny affine-row residuals; verify predicates and composed
+  results against the oracle rather than snapping coefficients to zero.
+- Normalize only declared nondeterminism, such as file timestamps or documented
+  writer-generated identifiers. Assert relationships for generated IDs. Never
+  erase all IDs, sort an ordered table or discard warnings to obtain equality.
+- Use Python→Rust→Python and Rust→Python→Rust read/edit/write tests. Full-file
+  byte identity is not required when both writers legitimately choose different
+  compression or metadata. Explicit opaque retention promises are tested
+  separately on the bytes actually promised.
+
+## Gates per implementation change
+
+1. Update the operation ledger and source references with the code change.
+2. Add differential cases that fail on the previous implementation; include at
+   least one boundary/failure case per meaningful behavior family.
+3. Run formatting, compiler/lints and all workspace tests. Run the affected
+   differential family plus the public corpus and downstream scene/STEP tests.
+4. For decoder edits, add bounded-input tests and update fuzz seeds. Enforce
+   time/memory budgets in subprocesses; a caught allocation failure after
+   unbounded allocation is not an acceptable budget mechanism.
+5. For edits/writes, check cache invalidation, reference integrity, both-language
+   round trips and destination preservation under every simulated failure.
+6. Record commands, host/toolchain, oracle hash, fixture hashes, result files,
+   failures/skips and remaining limitations. A green smoke test cannot override
+   an unresolved contract discrepancy.
+
+Run cross-platform qualification on pinned wheels and a declared Rust MSRV.
+The initial macOS oracle cannot establish Linux/Windows behavior, availability,
+font handling or memory use. WebAssembly is a useful later target, not a tested
+platform claim today. The pure-Rust core should build and run its Rust-only
+tests without Python or C/C++ geometry runtimes installed.
+
+## Benchmark only a proven shared workload
+
+Define the output contract before measuring: header read, structural index,
+complete document load, selected geometry evaluation, edit/write, or full Clay
+robotics conversion. Compare only the overlapping, verified contract and label
+it. Keep output facts/hash checks in every benchmark receipt. Count-only
+equality is insufficient for a complete-load or conversion comparison.
+
+For each benchmark, use identical immutable inputs and explicit release flags,
+oracle/runtime versions and host details. Run isolated workers sequentially;
+interleave/randomize Rust and Python trials. Report sample count, median and
+spread, failures, startup-included wall time and separately warm in-process
+time if useful. Distinguish cold/warm filesystem cache conditions. Do not
+flush global caches or disrupt other workloads just to claim a cold run.
+
+Measure peak resident memory of one fresh worker for each trial. Normalize
+macOS `ru_maxrss` bytes versus Linux KiB; include the interpreter and native
+extension in the Python process. Rust allocator accounting, Python tracemalloc
+and GPU allocation statistics are not interchangeable RSS metrics. Do not
+compare cumulative process high-water marks after multiple cases. If a
+converter spawns children, define and measure the process-tree memory contract
+instead of reporting only the parent. Keep elapsed-time and memory trials
+separate when instrumentation materially affects speed.
+
+Publish raw per-trial results, environment and exact commands. No speedup is
+claimed when one side omits required geometry or outputs. Library parity does
+not prove URDF/USD/MJCF/metadata equality; the Clay converter needs its own
+normalized file, mesh, transform, material and robot-semantics comparison.
+
+## Release definition
+
+An unqualified 1:1 release requires a closed, reviewed target inventory, every
+mapped operation passing its required behavior cases on declared platforms,
+no unresolved required deviations, read/edit/write fixture coverage, resource
+limits and fuzz qualification, and documented pure-Rust dependency provenance.
+Finite tests are evidence against the specified contract, not a mathematical
+proof for every possible CAD file. State the exact target version and tested
+scope with the release. Native-backend replacement progress is reported
+separately from observable API parity.

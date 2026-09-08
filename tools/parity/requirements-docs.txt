@@ -1,0 +1,2 @@
+# Development documentation rendering only; not a runtime library dependency.
+Markdown==3.8.2

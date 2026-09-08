@@ -1,0 +1,49 @@
+{
+  "schema": "rhino3dm-rs.conformance-case.v1",
+  "case_id": "math.basics-and-composition.v1",
+  "comparison": {
+    "numeric": {
+      "atol": 1e-12,
+      "rtol": 1e-12,
+      "rationale": "Computed double-precision operations only. This case retains the observed f32 narrowing of Transform.Translation(Vector3d) exactly through the explicit compatibility adapter."
+    }
+  },
+  "operations": [
+    {"id": "point", "call": "point3d.new", "args": [2.0, 3.0, 5.0]},
+    {"id": "other", "call": "point3d.new", "args": [3.0, 3.0, 5.0]},
+    {"id": "distance", "call": "point3d.distance_to", "receiver": "point", "args": [{"ref": "other"}]},
+    {"id": "translation", "call": "transform.translation", "args": [7.0, 11.0, 13.0]},
+    {"id": "translated", "call": "point3d.transform", "receiver": "point", "args": [{"ref": "translation"}]},
+    {"id": "scale", "call": "transform.diagonal", "args": [2.0]},
+    {"id": "translation_then_scale", "call": "transform.multiply", "args": [{"ref": "translation"}, {"ref": "scale"}]},
+    {"id": "scale_then_translation", "call": "transform.multiply", "args": [{"ref": "scale"}, {"ref": "translation"}]},
+    {"id": "first_order_point", "call": "point3d.transform", "receiver": "point", "args": [{"ref": "translation_then_scale"}]},
+    {"id": "second_order_point", "call": "point3d.transform", "receiver": "point", "args": [{"ref": "scale_then_translation"}]},
+    {"id": "inverse", "call": "transform.try_get_inverse", "receiver": "translation_then_scale"},
+    {"id": "round_trip", "call": "point3d.transform", "receiver": "first_order_point", "args": [{"ref": "inverse"}]},
+    {"id": "vector", "call": "vector3d.new", "args": [3.0, 4.0, 0.0]},
+    {"id": "vector_length_before", "call": "vector3d.length", "receiver": "vector"},
+    {"id": "unitize_result", "call": "vector3d.unitize", "receiver": "vector"},
+    {"id": "vector_length_after", "call": "vector3d.length", "receiver": "vector"},
+    {"id": "translation_from_vector", "call": "transform.translation", "args": [{"ref": "vector"}]},
+    {"id": "zero", "call": "transform.diagonal", "args": [0.0]},
+    {"id": "zero_inverse", "call": "transform.try_get_inverse", "receiver": "zero"}
+  ],
+  "observe": [
+    "distance",
+    "translated",
+    "translation_then_scale",
+    "scale_then_translation",
+    "first_order_point",
+    "second_order_point",
+    "inverse",
+    "round_trip",
+    "vector_length_before",
+    "unitize_result",
+    "vector",
+    "vector_length_after",
+    "translation_from_vector",
+    "zero",
+    "zero_inverse"
+  ]
+}

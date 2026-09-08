@@ -1,0 +1,36 @@
+{
+  "schema": "rhino3dm-rs.conformance-case.v1",
+  "case_id": "foundation.point3f.v1",
+  "comparison": {
+    "numeric": {
+      "atol": 0.0,
+      "rtol": 0.0,
+      "rationale": "The case observes the pinned binding's f32 storage and f32 addition exactly after widening results back to JSON numbers."
+    }
+  },
+  "operations": [
+    {"id": "precision_point", "call": "point3f.new", "args": [0.1, 0.2, 0.3]},
+    {"id": "precision_encoded", "call": "point3f.encode", "receiver": "precision_point", "args": []},
+    {"id": "point", "call": "point3f.new", "args": [0.1, 0.2, 0.3]},
+    {"id": "point_same", "call": "point3f.new", "args": [0.1, 0.2, 0.3]},
+    {"id": "point_other", "call": "point3f.new", "args": [1.0, 2.0, 3.0]},
+    {"id": "point_sum", "call": "point3f.add_point", "receiver": "point", "args": [{"ref": "point_other"}]},
+    {"id": "point_equal", "call": "point3f.equals", "receiver": "point", "args": [{"ref": "point_same"}]},
+    {"id": "point_not_equal", "call": "point3f.equals", "receiver": "point", "args": [{"ref": "point_other"}]},
+    {"id": "point_inequality", "call": "point3f.not_equals", "receiver": "point", "args": [{"ref": "point_other"}]},
+    {"id": "point_set_x", "call": "point3f.set_coordinate", "receiver": "point", "args": ["X", 7.25]},
+    {"id": "point_set_y", "call": "point3f.set_coordinate", "receiver": "point", "args": ["Y", -1.0]},
+    {"id": "point_set_z", "call": "point3f.set_coordinate", "receiver": "point", "args": ["Z", 0.0]},
+    {"id": "point_encoded", "call": "point3f.encode", "receiver": "point", "args": []}
+  ],
+  "observe": [
+    "precision_point",
+    "precision_encoded",
+    "point_sum",
+    "point_equal",
+    "point_not_equal",
+    "point_inequality",
+    "point",
+    "point_encoded"
+  ]
+}

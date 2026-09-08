@@ -15,6 +15,15 @@ explicitly instead of presenting incomplete geometry as a successful decode.
 > **Early-stage API:** archive framing and the typed records below are usable;
 > complete curve, mesh, Brep, and extrusion APIs are still in progress.
 
+## Python compatibility roadmap
+
+The [Python parity audit and implementation plan](docs/parity/README.md) records
+the exact versioned oracle, current gaps, proposed architecture, ordered work
+packages and differential acceptance tests. Start a coding agent with the
+[handoff brief](docs/parity/AGENT_HANDOFF.md), or read the complete
+[offline HTML guide](docs/parity/index.html). These are specifications for
+unfinished work, not a claim of 1:1 Python compatibility.
+
 ## Why this exists
 
 Most 3DM tooling is backed by OpenNURBS or Rhino. This project explores a

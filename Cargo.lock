@@ -344,6 +344,7 @@ dependencies = [
  "cadmpeg-codec-rhino",
  "cadmpeg-codec-step",
  "cadmpeg-ir",
+ "crc32fast",
  "serde",
  "serde_json",
 ]

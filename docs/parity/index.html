@@ -1,0 +1,1243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Audited Python parity gaps, architecture, implementation roadmap and coding-agent handoff for rhino3dm-rs.">
+<title>rhino3dm-rs · Python parity implementation guide</title>
+<style>
+:root { color-scheme: light; --ink:#172a35; --muted:#526675; --line:#d3dfe3;
+  --accent:#007367; --paper:#fff; --wash:#f2f6f7; }
+* { box-sizing:border-box; }
+html { scroll-behavior:smooth; scroll-padding-top:24px; }
+body { margin:0; color:var(--ink); background:var(--wash);
+  font:16px/1.65 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+a { color:var(--accent); text-decoration-thickness:1px; text-underline-offset:3px; }
+a:hover { color:#004c45; }
+a:focus-visible { outline:3px solid #c56f05; outline-offset:4px; }
+.shell { display:grid; grid-template-columns:220px minmax(0,1000px); gap:32px;
+  max-width:1332px; margin:auto; padding:32px; }
+nav { position:sticky; top:32px; align-self:start; }
+.brand { font-size:20px; font-weight:750; letter-spacing:-.6px; }
+.kicker { font-size:12px; text-transform:uppercase; letter-spacing:1.3px;
+  font-weight:700; color:var(--accent); margin:0 0 12px; }
+nav ul { list-style:none; padding:0; margin:24px 0; }
+nav li { margin:6px 0; }
+nav a { display:block; padding:9px 12px; border-radius:6px; text-decoration:none; }
+nav a:hover { background:#e1efeb; }
+.note { color:var(--muted); font-size:13px; }
+main { min-width:0; }
+.hero, article { background:var(--paper); border:1px solid var(--line);
+  border-radius:12px; padding:36px; margin-bottom:24px; }
+.hero h1 { font-size:clamp(28px,4vw,46px); line-height:1.14; letter-spacing:-1.5px;
+  margin:12px 0 20px; max-width:800px; }
+.hero p { max-width:750px; }
+.summary { padding:16px 20px; border-left:4px solid var(--accent);
+  background:#f0f8f5; border-radius:0 6px 6px 0; }
+.facts { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-top:24px; }
+.fact { border-top:1px solid var(--line); padding-top:14px; }
+.fact strong { display:block; font-size:28px; line-height:1.3; }
+.fact span { color:var(--muted); font-size:13px; }
+article > h1 { font-size:29px; line-height:1.3; margin:8px 0 24px; letter-spacing:-.6px; }
+h2 { font-size:22px; line-height:1.4; margin:36px 0 16px; }
+h3 { font-size:18px; margin:28px 0 12px; }
+p { margin:14px 0; }
+li { margin:8px 0; }
+code { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.87em;
+  overflow-wrap:anywhere; background:#eef3f5; padding:2px 4px; border-radius:3px; }
+pre { white-space:pre; overflow:auto; border:1px solid var(--line); padding:20px;
+  background:#f5f8fa; border-radius:7px; line-height:1.5; max-width:100%; }
+pre code { overflow-wrap:normal; padding:0; background:none; font-size:12px; }
+.table-wrap { overflow:auto; margin:20px 0; }
+table { width:100%; border-collapse:collapse; font-size:14px; }
+th,td { text-align:left; vertical-align:top; border-bottom:1px solid var(--line);
+  padding:12px 10px; min-width:100px; }
+th { background:#eef4f3; font-weight:650; }
+tr:last-child td { border-bottom:0; }
+blockquote { margin:20px 0; border-left:4px solid var(--accent); padding:1px 20px; }
+.source { font-size:12px; color:var(--muted); }
+footer { color:var(--muted); font-size:13px; padding:8px 0 40px; }
+@media(max-width:950px) {
+  .shell { grid-template-columns:minmax(0,1fr); padding:20px; gap:20px; }
+  nav { position:static; }
+  nav ul { display:flex; flex-wrap:wrap; margin:12px 0 0; gap:4px; }
+  nav li { margin:0; }
+  nav a { padding:6px 9px; }
+  nav .note { display:none; }
+}
+@media(max-width:580px) {
+  .shell { padding:12px; }
+  .hero,article { padding:22px 18px; border-radius:8px; }
+  .facts { grid-template-columns:1fr; }
+  article > h1 { font-size:25px; }
+  pre { padding:12px; }
+}
+@media(prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } }
+@media print {
+  body { background:white; font-size:11pt; }
+  .shell { display:block; padding:0; }
+  nav { display:none; }
+  .hero,article { border:0; padding:0; border-radius:0; }
+  article { break-before:page; }
+  pre { white-space:pre-wrap; }
+  .table-wrap { overflow:visible; }
+  th,td { min-width:0; }
+}
+</style>
+</head>
+<body id="top">
+<div class="shell">
+<nav aria-label="Guide sections">
+<div class="brand">rhino3dm-rs</div>
+<div class="note">Python parity · engineering brief</div>
+<ul><li><a href="#overview">Audit & gaps</a></li>
+<li><a href="#architecture">Architecture</a></li>
+<li><a href="#roadmap">Implementation plan</a></li>
+<li><a href="#conformance">Tests & acceptance</a></li>
+<li><a href="#handoff">Coding-agent brief</a></li></ul>
+<p class="note">Audited 7 September 2026<br>Baseline 34a8846<br>Offline reading copy</p>
+<a href="oracle-lock.json">Oracle artifact lock ↗</a>
+<a href="python-api-8.32.1.json">Primary API inventory ↗</a>
+</nav>
+<main>
+<header class="hero">
+<p class="kicker">Audit → architecture → implementation</p>
+<h1>A testable path to Python parity in pure Rust.</h1>
+<p>The existing package is a useful archive and scene foundation. Matching the
+Python package requires a complete document model, geometry operations,
+general serialization and versioned behavioral tests.</p>
+<div class="summary"><strong>Status: plan, not completed parity.</strong><br>
+Target PyPI distribution 8.32.1; its audited wheel reports runtime 8.32.2.
+Keep Python 8.17.0 as the Clay regression oracle. No production decoder
+changes were made for this audit.</div>
+<div class="facts">
+<div class="fact"><strong>212</strong><span>Exported Python classes, including enums<br>Not a parity percentage</span></div>
+<div class="fact"><strong>13</strong><span>Ordered work packages, P00–P12<br>Each has an acceptance gate</span></div>
+<div class="fact"><strong>11</strong><span>Existing Rust workspace tests passed<br>Not a conformance suite</span></div>
+</div>
+</header>
+<article id="overview" aria-label="README.md">
+<p class="source">Source: <a href="README.md">README.md</a></p>
+<h1 id="overview-python-parity-audited-baseline-and-scope">Python parity: audited baseline and scope</h1>
+<p>Audit: 2026-09-07. Implementation baseline: commit
+<code>34a8846b01db1d4aa9dafb11ab42f7a09776d30d</code> in the standalone
+<a href="https://github.com/lucas-vitrus/rhino3dm-rs"><code>lucas-vitrus/rhino3dm-rs</code></a>
+repository. This is an implementation specification, not a claim of completed
+parity. No production decoder changes were made for this audit.</p>
+<p>Start with <a href="#handoff">AGENT_HANDOFF.md</a>, then
+<a href="#architecture">ARCHITECTURE.md</a>, <a href="#roadmap">IMPLEMENTATION_PLAN.md</a>,
+and <a href="#conformance">CONFORMANCE.md</a>. <a href="#top">index.html</a> is the offline
+reading copy. The <a href="oracle-lock.json">oracle lock</a> records exact references.
+The <a href="VERIFICATION.md">audit verification receipt</a> distinguishes checks executed
+now from the future conformance suite.</p>
+<h2 id="overview-what-11-means">What 1:1 means</h2>
+<p>Target observable behavior of the <strong>Python <code>rhino3dm</code> distribution</strong>, including
+geometry creation/query/editing, document tables, serialization, enums,
+collection operations, overloads, defaults, and failure results. Rust spelling
+and memory ownership can be idiomatic, but every target operation must have an
+explicit Rust mapping and equivalent observable results. Mapping a Python
+<code>None</code> to Rust <code>Option::None</code> is acceptable; substituting a placeholder object is
+not. Document any unavoidable language differences and test them.</p>
+<p>Runtime production code must stay pure Rust. Python and upstream OpenNURBS are
+development references and test oracles. Existing Rust <code>cadmpeg</code> functionality
+can be reused behind a private adapter when its behavior passes conformance.
+Full ownership of every decoder implementation is a separate backend goal;
+wrapping a dependency does not establish semantic parity.</p>
+<p>The target is not all of RhinoCommon, Rhino's application GUI, Rhino Compute,
+Grasshopper, a photorealistic renderer, or a robotics compiler. Those have
+different APIs. In the audited Python wheel, <code>BrepFace.GetMesh</code> exists and
+<code>Mesh.CreateFromBrep</code> does not. Cached render-mesh access is required; a general
+new BRep tessellator is an optional extension unless a pinned target method
+actually needs it. Boolean/fillet/meshing operations must be scoped from the
+inventory, not copied from RhinoCommon documentation.</p>
+<h2 id="overview-versioned-target-and-actual-api-size">Versioned target and actual API size</h2>
+<p>The latest PyPI distribution observed during the audit is <strong>8.32.1</strong>. The
+official CPython 3.10 macOS wheel reports <code>rhino3dm.__version__ == "8.32.2"</code>.
+Both versions and the verified wheel SHA-256 are recorded in
+<a href="oracle-lock.json">oracle-lock.json</a>. Pin that artifact for the initial target;
+record separate hashes/platform inventories when enabling Linux and Windows.
+Keep 8.17.0 as the existing Clay regression oracle. Do not install over the
+user's Clay environment.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Runtime inventory</th>
+<th style="text-align: right;">8.17.0 regression</th>
+<th style="text-align: right;">8.32.1 distribution target</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Exported classes, including enums and binding iterator classes</td>
+<td style="text-align: right;">193</td>
+<td style="text-align: right;">212</td>
+</tr>
+<tr>
+<td>Enum classes</td>
+<td style="text-align: right;">46</td>
+<td style="text-align: right;">49</td>
+</tr>
+<tr>
+<td>Public class-member slots, including inherited slots</td>
+<td style="text-align: right;">3,159</td>
+<td style="text-align: right;">3,359</td>
+</tr>
+<tr>
+<td>Declared members plus selected language protocols</td>
+<td style="text-align: right;">2,391</td>
+<td style="text-align: right;">2,645</td>
+</tr>
+</tbody>
+</table></div>
+<p>These are inventory counts, <strong>not unique methods, overload counts, or a parity
+percentage</strong>. The earlier 105-class estimate came from an incomplete <code>.pyi</code>.
+The generated operation ledger now contains 3,229 callable/property
+obligations. Runtime-writable properties create explicit setter obligations
+even when the shipped stub omits them. One hundred twenty-two obligations are backed by
+eight passing, pinned-oracle foundation/geometry cases and every
+other entry remains incomplete. Existing Rust types with the same name are not
+automatically compatible.</p>
+<p>Newer exported types include BrepLoop/BrepTrim collections, SubDEdge/SubDFace/
+SubDVertex and tags, and nine <code>BND_SubD…Iterator…</code> classes. Investigate those
+binding-named iterators explicitly: reproduce their public iteration behavior
+or record a reviewed exception; do not silently remove them from the target.</p>
+<p>The machine-readable inventories include constructors, operators, inherited
+member names, property mutability, enums, and callable docstrings:</p>
+<ul>
+<li><a href="python-api-8.32.1.json">python-api-8.32.1.json</a></li>
+<li><a href="python-api-8.17.0.json">python-api-8.17.0.json</a></li>
+<li>Generator: <a href="../../tools/parity/inventory_python.py">tools/parity/inventory_python.py</a></li>
+</ul>
+<p>Introspection does not discover every overload or error condition. P00 merges
+these snapshots with release binding source and behavior probes.</p>
+<p>To regenerate the offline guide, install
+<code>tools/parity/requirements-docs.txt</code> in an isolated development environment,
+then run <code>python tools/parity/render_handoff.py</code> from the repository root.
+<code>python tools/parity/render_handoff.py --check</code> checks freshness and local
+links/anchors. The installed Rust library has no dependency on these tools.</p>
+<h2 id="overview-what-the-current-standalone-rust-repository-actually-has">What the current standalone Rust repository actually has</h2>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Family</th>
+<th>Current evidence</th>
+<th>Missing to reach Python parity</th>
+<th>Plan</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Archive / File3dm</td>
+<td>Signature, version, tables, object framing; retained immutable source spans; 1 GiB default / explicit source-byte limit; header-only version read; direct class-UUID CRC check</td>
+<td>Whole-chunk CRC scope, declared-version matrix, nested resource budgets, reader/byte-array APIs, metadata, general writing</td>
+<td>P01, P03, P04, P08</td>
+</tr>
+<tr>
+<td>Points / vectors / transforms / primitives</td>
+<td>Point/vector fields; tested Point2d/Point3d/Point3f/Point4d/Vector2d/Vector3d/Vector3f construction, mutable coordinates and encoding; tested Point2d distance/addition; tested f32 narrowing; tested interval endpoint state; tested Line endpoint/property/interpolation/transform behavior; tested transform composition, inversion, predicates, transpose, axis-angle rotation; ON_Point data; instance matrix read</td>
+<td>Full constructors, operators, bounds, planes, intervals, primitives and behavior</td>
+<td>P02</td>
+</tr>
+<tr>
+<td>Object attributes / tables</td>
+<td>Native ID/name/layer/UserStrings subset; scene projection has more presentation fields</td>
+<td>Editable table model, complete fields, properties, groups, linetypes, views, settings, document strings and userdata</td>
+<td>P03, P07, P10</td>
+</tr>
+<tr>
+<td>Instances</td>
+<td>Native definition IDs/names/members and reference matrices; bridge occurrences</td>
+<td>Shared typed IDs, resolved nested occurrences, cycles/duplicates, linked blocks, edit/write, ownership/lifetime semantics</td>
+<td>P03, P06, P08</td>
+</tr>
+<tr>
+<td>Curves</td>
+<td>Bridge exact-carrier census; public native types absent</td>
+<td>Line/arc/polyline/polycurve/Bezier/NURBS, proxies, knots/control points, evaluation and exposed edits</td>
+<td>P05</td>
+</tr>
+<tr>
+<td>Surfaces / BReps / extrusions</td>
+<td>Bridge carriers and some display data; limited class classification</td>
+<td>Typed analytic/NURBS surfaces, BRep topology including trims/loops, extrusion APIs, validity and cached mesh access</td>
+<td>P09</td>
+</tr>
+<tr>
+<td>Meshes / point collections</td>
+<td>Scene RenderMesh triangles, normals, raw channels</td>
+<td>Rhino-native quads, precision arrays, topology, UVs/colors, point clouds/grids, creation/edit/query/write</td>
+<td>P04</td>
+</tr>
+<tr>
+<td>SubD</td>
+<td>No matching public Rust topology API</td>
+<td>Control net/topology/tags, iterators, subdivision and exposed queries/serialization</td>
+<td>P11</td>
+</tr>
+<tr>
+<td>Materials / textures / RDK</td>
+<td>Scene layers, legacy/PBR scalars, texture transforms, asset descriptors</td>
+<td>Exact embedded bytes, mapping/UV semantics, source inheritance, editable material/render-content trees and exposed APIs</td>
+<td>P07, P10</td>
+</tr>
+<tr>
+<td>Text / dimensions / annotations / hatches</td>
+<td>Object-level metadata only</td>
+<td>Typed annotation classes, styles, formatting, geometry, font information and write support</td>
+<td>P10</td>
+</tr>
+<tr>
+<td>Views / lights / render settings</td>
+<td>No general Python-equivalent table API</td>
+<td>Cameras/projections/clipping, named views, light/sun/environment/ground-plane/workflow/post-effect data and methods</td>
+<td>P10</td>
+</tr>
+<tr>
+<td>Serialization / dictionaries / compression</td>
+<td>Narrow exact STEP-to-3DM writer via Rust bridge</td>
+<td>General File3dm.Write, Encode/Decode, FromByteArray, ArchivableDictionary and Draco wrappers</td>
+<td>P08, P10, P11</td>
+</tr>
+<tr>
+<td>Extensions</td>
+<td>Technical SVG renderer, Three.js scene projection, exact STEP admission</td>
+<td>Preserve these consumers; they do not count toward Python parity</td>
+<td>P06, P07, P12</td>
+</tr>
+</tbody>
+</table></div>
+<p>The standalone checkout is ahead of the old nested crate at
+<code>vitrus-4/vitrus-convert/crates/rhino3dm-rs</code>. Its scene/material work and narrow
+STEP writer must be preserved. Build the parity work in the standalone
+repository; migrate the Vitrus consumer to a pinned release later.</p>
+<h2 id="overview-current-high-priority-limitations">Current high-priority limitations</h2>
+<p>The first P01/P02 changes remove the prior silent definition drop, distinguish
+partially preserved attributes, retain source bytes, bound header reads, and
+verify direct class-UUID CRCs. They are deliberately not a claim that archive
+integrity or document editing is complete. The next limitations are:</p>
+<ol>
+<li>Container/object CRC scope, EOF/trailing-data policy, archive-version
+   coverage, and explicit document/count/decompression/depth budgets still need
+   parser-level implementation and malformed-input conformance.</li>
+<li><code>GeometryProbe::complete_object_decode</code> parses human-readable warning text
+   and checks only a census plus error severity. That cannot prove all object
+   fields, topology, textures or valid references survived.</li>
+<li><code>SceneDocument::read</code> decodes again and serializes the entire bridge IR into
+   JSON. This duplicates work/memory and creates a fragile schema dependency.</li>
+<li>Scene capabilities are static booleans; several JSON helpers default absent
+   data. Library support, observed document coverage, and required output
+   capabilities must be distinct.</li>
+<li>The scene code documents bridge coordinates normalized to millimeters, but
+   <code>threejs_manifest</code> labels them document units. There is no end-to-end unit
+   contract or equivalent cross-unit fixture yet.</li>
+<li>Source UUIDs occur as raw wire arrays, strings, and internal bridge record
+    IDs. Their conversion and identity joins need one explicit contract.</li>
+<li>The renderer omits instance references; <code>ThreejsManifest</code> lacks a complete
+    definition/occurrence transform graph. Resolve membership before drawing
+    definition members as independent world geometry.</li>
+<li>The all-targets suite passes <strong>20 tests</strong> (17 core, 3 renderer), with three
+   additional Python/Rust differential math cases. That is a tested foundation,
+   not a per-operation conformance suite. No checked-in <code>.github</code> CI workflow
+   was present in this checkout.</li>
+</ol>
+<p>P01 owns archive/diagnostic fixes; P02/P03 own math/ID/unit contracts; P06 owns
+scene joins and occurrences. Do not fix a fidelity failure by loosening a
+consumer's admission check.</p>
+<h2 id="overview-r06-and-the-earlier-speed-claim">R06 and the earlier speed claim</h2>
+<p>The external source hash was refreshed during this audit and still matches the
+lock. Python 8.17.0 reports 2,511 objects: 1,040 Breps, 673 NURBS curves, 356
+instances, 229 lines, 61 polyline curves, 48 polycurves, 38 points, 32 arcs, 25
+extrusions, 4 text dots, 3 linear dimensions and 2 meshes. Earlier equal counts
+for metadata/block membership are a useful census, not a value-level proof.</p>
+<p>The 36 R06 instance matrices previously called “projective” differ from an
+exact affine last row by at most <strong>1.8070621780539365e-18</strong>, measured through
+Python. The earlier nil-UUID explanation was also unsupported. Preserve matrix
+values, test Python's predicates and composition behavior, and avoid a blanket
+rejection based on exact floating-point equality.</p>
+<p>The earlier 42× R06 claim compared a partial Rust index with Python loading a
+full geometry model. It is not an equal-work full-converter speedup. The newer
+checked-in <a href="../../benchmarks/results/latest.json">structural benchmark</a> clearly
+labels its subset; even matching its aggregate census does not prove geometry
+equivalence. Geometry/API performance must be measured after the corresponding
+value-level contract passes. No full Rust-versus-Clay conversion benchmark is
+established by this audit.</p>
+<h2 id="overview-references-and-ownership">References and ownership</h2>
+<ul>
+<li><a href="https://github.com/mcneel/rhino3dm">McNeel rhino3dm</a>: bindings and geometry API.</li>
+<li><a href="https://pypi.org/pypi/rhino3dm/8.32.1/json">Python release metadata</a>: primary wheel/source artifact identity.</li>
+<li><a href="https://mcneel.github.io/rhino3dm/python/api/">Python API documentation</a>: navigation; verify version against the oracle.</li>
+<li><a href="https://github.com/mcneel/rhino3dm/tree/1e0c80e6b9cf7ff3c1579d287e178b21634a2a6d">8.17 source commit</a>: regression bindings and tests.</li>
+<li>Source files in the pinned sdist: <code>src/bindings/bnd_*.cpp</code>, headers, and
+  bundled <code>src/lib/opennurbs</code>. Check binding build flags; Python and JavaScript
+  exports can differ. Do not use the moving <code>8.x</code> branch as a frozen oracle.</li>
+</ul>
+<p>Preserve applicable MIT/OpenNURBS/cadmpeg/Draco notices when translating or
+reusing code. Python signatures in the inventory originate from McNeel's MIT
+licensed package. Unknown plugin behavior is outside what even the Python
+package can interpret; preserve its opaque data and match exposed behavior.</p>
+</article>
+<article id="architecture" aria-label="ARCHITECTURE.md">
+<p class="source">Source: <a href="ARCHITECTURE.md">ARCHITECTURE.md</a></p>
+<h1 id="architecture-architecture-for-python-api-parity">Architecture for Python API parity</h1>
+<p>Status: proposed target architecture. Paths and signatures below are not claims
+that the APIs exist today. Implement in the standalone repository and preserve
+its current clients through adapters/deprecations.</p>
+<h2 id="architecture-module-boundaries">Module boundaries</h2>
+<p>Keep one core crate initially. Splitting every module into another crate would
+add coordination before its interfaces are stable. Keep the existing renderer
+as its own workspace package. Make STEP and the temporary bridge optional
+features once their dependency boundaries are isolated.</p>
+<pre><code class="language-text">                    Rust application / CLI / future language bindings
+                                      |
+                           rhino3dm_rs::File3dm
+                        typed document and geometry
+                        /                         \
+          document, attributes, tables       geometry, math
+                        \                         /
+                         archive reader / writer
+                           |                |
+                    native class codecs   private bridge adapter
+                           |                |  (per-operation coverage)
+                           +---- ByteStore -+
+
+  document -&gt; scene adapter -&gt; rhino3dm-render / Three.js adapter
+  document &lt;-&gt; STEP adapter                  (optional extension)
+  Python oracle -&gt; conformance fixtures -&gt; Rust operation runner (tests only)
+</code></pre>
+<pre><code class="language-text">src/
+  lib.rs                         public facade and reexports
+  archive/
+    mod.rs                       read modes and archive version policies
+    store.rs                     immutable source storage and checked spans
+    cursor.rs                    bounded primitive reads, counts, offsets
+    chunks.rs                    chunk framing, parent bounds, CRC rules
+    reader.rs                    tables, class registry, read reports
+    writer.rs                    chunk sizes, CRCs, versioned records
+    extensions.rs                raw userdata and plugin records
+    limits.rs                    bytes, counts, recursion, decompression
+    codecs/                      per-class versioned read/write payloads
+  document/
+    mod.rs                       File3dm, file metadata, edit revision
+    object.rs                    File3dmObject, Geometry handle, attributes
+    tables.rs                    stable identity, iteration, find/add/delete
+    settings.rs                  units, tolerances, file flags
+    instances.rs                 definitions, references, graph resolution
+  geometry/
+    mod.rs                       typed Geometry enum and common operations
+    point.rs, pointcloud.rs
+    curve.rs, nurbs_curve.rs, polycurve.rs
+    surface.rs, nurbs_surface.rs, extrusion.rs
+    mesh.rs, brep.rs, subd.rs
+    annotation.rs, hatch.rs
+  math/                          vectors, transforms, primitives, tolerances
+  attributes.rs                  complete object fields + extension data
+  appearance/                    materials, PBR, textures, RDK, assets
+  views/                         camera, viewport, lights, render settings
+  serialization/                 object/dictionary encoding, Draco adapters
+  compatibility/                 pinned Python behavior mappings
+  diagnostics.rs                 structured failures, coverage and provenance
+  bridge/cadmpeg.rs               private IR projection and loss mapping
+  scene.rs                       existing renderer API, migrated incrementally
+  step.rs                        existing optional exact STEP extension
+tools/parity/                    oracle inventory and operation harness
+tests/conformance/               language-neutral cases and expected facts
+fixtures/conformance/            small redistributable models
+</code></pre>
+<h2 id="architecture-a-document-owns-one-source-and-one-typed-model">A document owns one source and one typed model</h2>
+<p>Use an immutable <code>ByteStore</code> with <code>Arc&lt;[u8]&gt;</code> as the initial backend. A span is
+valid only against its owning store. A later streaming/file-backed reader can
+implement the same contract; defer memory mapping until its platform and unsafe
+boundary is justified. Checked offsets use <code>u64</code>; conversion to <code>usize</code> is
+fallible. Header-only version reads consume only the header.</p>
+<p>The document keeps metadata, tables and objects with stable handles, plus the
+original archive index and diagnostics. Lazy payload decoding may cache typed
+geometry keyed by source span and decode revision. Incomplete decode must be
+stored as a result, never an absent object. Repeated reads of the same cached
+payload must not repeat decompression or duplicate buffers. Immutable shared
+reads can later be <code>Send + Sync</code>; mutable editing starts with <code>&amp;mut File3dm</code>.</p>
+<p>Geometry has typed variants for every supported class family and an explicit
+opaque variant carrying class ID, raw payload, userdata and diagnostics. Shared
+operations such as bounds/transform/duplicate/validity dispatch on the enum;
+do not expose the bridge's IR or <code>serde_json::Value</code> as the long-term modeling
+contract. JSON remains useful for diagnostics, inventories and adapters.</p>
+<p>BRep, surface, mesh and annotation objects can hold component handles into
+owned arenas. A BrepFace/BrepEdge/CurveProxy must remain associated with its
+parent and orientation. Mutating through a face/point-list/table view must
+update the owning document exactly once, invalidate dependent caches and avoid
+detached copies. Define what happens to handles after deletion/reindexing.
+Use generation-checked handles or scoped borrows; never expose dangling views.</p>
+<h2 id="architecture-separate-compatibility-decode-coverage-and-consumer-requirements">Separate compatibility, decode coverage and consumer requirements</h2>
+<p>Proposed contracts (illustrative, not implemented):</p>
+<pre><code class="language-rust">pub struct ReadOptions {
+    pub mode: ReadMode,             // inspect/recover or strict per contract
+    pub limits: DecodeLimits,
+    pub preserve_unknown: bool,
+    pub verify_checksums: bool,
+}
+
+pub enum FieldCoverage {
+    DecodedExact,
+    DecodedEquivalent { evidence: EvidenceId },
+    RetainedOpaque,
+    Unsupported,
+    Corrupt,
+}
+
+pub struct ReadReport {
+    pub archive: ArchiveIntegrity,
+    pub objects: Vec&lt;ObjectCoverage&gt;,
+    pub tables: Vec&lt;TableCoverage&gt;,
+    pub diagnostics: Vec&lt;Diagnostic&gt;,
+}
+
+impl File3dm {
+    pub fn read_with_options(path: impl AsRef&lt;Path&gt;, options: ReadOptions)
+        -&gt; Result&lt;(Self, ReadReport), ReadError&gt;;
+    pub fn from_bytes(bytes: Arc&lt;[u8]&gt;, options: ReadOptions)
+        -&gt; Result&lt;(Self, ReadReport), ReadError&gt;;
+    pub fn write(&amp;self, writer: impl Write, options: WriteOptions)
+        -&gt; Result&lt;WriteReport, WriteError&gt;;
+}
+</code></pre>
+<p>A library capability says a decoder exists. Document coverage says what was
+actually recovered. A consumer requirement says what the requested operation
+needs. Keep all three separate. A display consumer may use cached triangles;
+a BRep query needs its topology and surfaces; a lossless edit/write also needs
+unknown-data retention. There is no universal <code>complete=true</code> derived from
+equal record counts. Keep legacy <code>complete_object_decode</code> as a deprecated
+census helper until clients migrate, and clearly document its limited meaning.</p>
+<p>Diagnostics carry stable codes, severity, object UUID when available, table,
+class ID, source span, field, archive/writer version and the affected
+capability. Preserve one result for every source object/definition, including
+failures. Recovery mode reports corruption; strict mode rejects the requested
+operation. Structural parse success, valid geometry and complete public API
+support are distinct. Match Python's ability to represent invalid geometry
+and <code>IsValidWithLog</code>; do not prohibit all invalid or unset values at read time.</p>
+<h2 id="architecture-identity-units-transforms-and-inheritance">Identity, units, transforms and inheritance</h2>
+<p>Use one UUID type with tested <code>from_wire_le</code>, <code>to_wire_le</code>, canonical string and
+nil operations. The first 4/2/2 UUID byte groups have wire endianness semantics;
+hex-encoding the entire raw array is not a canonical UUID. Keep internal record
+IDs separate from source UUIDs. Detect duplicate source IDs without overwriting
+records. Define lookup ambiguity and Python-equivalent insertion behavior.</p>
+<p>The core document retains <strong>source units</strong> and tolerances, matching Python.
+No implicit millimeter/meter normalization occurs in its geometry APIs. A
+bridge that normalizes units must explicitly reverse or tag that normalization
+before producing a document value. Scene/robotics adapters request an output
+unit and record the scale. Core geometry stays Rhino Z-up. Do not rotate axes
+inside a decoder.</p>
+<p>Represent <code>Transform</code> as a documented row-major 4×4 matrix with a fixed vector
+convention, verified against Python. Test composition with rotation plus
+translation (noncommuting), homogeneous division, reflection, nonuniform scale,
+singular transforms, inversion and normals. Preserve every stored coefficient.
+<code>IsAffine</code>, <code>IsValid</code>, etc. follow the oracle's predicates, including tolerance
+behavior. R06's tiny nonzero last-row coefficients are a dedicated regression.</p>
+<p>Resolve a block through definition membership and an occurrence path; compose
+parent and child matrices in the verified order. Apply transform once. Resolve
+visibility, ByLayer/ByObject/ByParent color/material rules at the occurrence,
+not by changing the reusable definition. Bound recursion/expansion, detect
+cycles and missing definitions, and preserve negative-determinant orientation.
+Only roots appear as independent world objects; definition-owned objects stay
+local unless instantiated. Identity includes occurrence path so two instances
+of one source mesh cannot overwrite each other.</p>
+<h2 id="architecture-mesh-and-exact-geometry-are-different-representations">Mesh and exact geometry are different representations</h2>
+<p><code>Mesh</code> is a Rhino modeling object: original vertex precision, native triangle/
+quad faces, normals, UVs, colors, topology and exposed mutation operations.
+<code>RenderMesh</code> is a derived display view and may triangulate. Preserve quads,
+ngon membership and indexing before generating a display view. Retain separate
+render/analysis/preview cache types and per-Brep-face ownership.</p>
+<p>BReps use indexed vertices/edges/trims/loops/faces/surfaces, curve/surface proxy
+domains and orientations. Validate bounds and index ranges without replacing
+invalid source geometry with an invented solid. A trimmed face requires its
+2D trim curves and 3D edges, including seam/singular cases. NURBS preserve order,
+degree, knot convention, rational control-point weights, domains and periodic
+state. Match exposed constructors and operations via behavioral tests.</p>
+<p>There are three separate implementation tasks: reading exact geometry, reading
+cached display meshes, and generating new display meshes. Only the first two
+are unconditional parity requirements. Any new tessellator has its own
+tolerance/quality contract and may not replace exact geometry or claim Rhino
+tessellation identity.</p>
+<h2 id="architecture-general-writing-and-edit-invalidation">General writing and edit invalidation</h2>
+<p>Build a versioned writer alongside each supported reader, starting with points
+and document tables. Preserve UUIDs, source order where observable, indices,
+units, settings, nesting, userdata and correct chunk/CRC rules. Keep archive
+version, writer version, class payload version and API distribution version
+distinct. Probe what the pinned Python writer actually accepts, including
+default <code>version=0</code>; do not assume all historic versions are writable.</p>
+<p>An unmodified document may reuse an opaque record only when retained bytes,
+CRC scope and references remain valid. If edits change indices, versions or
+parents, raw bytes may no longer be safe to replay. Track dirty dependencies;
+re-encode known fields and reject a requested lossless write whose opaque
+references cannot be repaired. Byte preservation and semantic preservation
+are separate guarantees. Metadata such as timestamps may legitimately differ.</p>
+<p>All failure paths must leave an existing destination untouched. Write to a
+unique sibling, finalize length/checksums, verify where appropriate, then
+replace atomically under the documented platform policy. The current exact
+STEP path has this pattern, but its narrow writer is not File3dm.Write parity.
+Cache invalidation applies to bounds, render meshes, topology, material/UV
+projections and encoded payloads after every relevant edit.</p>
+<p>Treat CAD archives and embedded filenames as untrusted input. Reading a texture
+reference must not automatically fetch a URL or open arbitrary external paths.
+Expose references as data; asset resolution is an explicit caller policy with
+an allowed root. Bound embedded extraction and reject path traversal/symlink
+escapes before writing assets. Rust memory safety does not prevent resource
+exhaustion, filesystem traversal or accidental network access.</p>
+<h2 id="architecture-how-the-bridge-is-reused-and-retired">How the bridge is reused and retired</h2>
+<p>Create a private adapter that accepts the same source/limits and returns typed
+fields plus structured coverage. Maintain a per-operation ledger with
+<code>native</code>, <code>bridge</code>, <code>opaque</code> and <code>missing</code> backend states. Public behavior can
+be verified for a bridge operation; dependency presence alone gives no credit.
+Do not project all IR through JSON or execute two full file reads per API call.
+Do not promote a count-only probe into a Mesh/Brep result.</p>
+<p>For each family: extract oracle cases, test the current bridge, expose only
+the fields that preserve identity/units/topology, then replace unsupported
+codec/algorithm pieces natively. A feature build with the bridge disabled
+proves which capabilities are actually native. Full pure-Rust dependency reuse
+is permitted; OpenNURBS FFI or invoking Python in production is not the selected
+architecture. If a dependency is translated/forked, pin provenance and retain
+licenses; do not hand-copy unexplained UUIDs or wire layouts.</p>
+<h2 id="architecture-rust-and-python-interface-mapping">Rust and Python interface mapping</h2>
+<p>Use idiomatic Rust names in the core and record <code>PythonClass.Member(overload)</code>
+to Rust symbol mappings. Model Python overloads with separate constructors,
+typed input enums or well-scoped conversion traits. Match defaults, indexing,
+ordering, mutation aliasing, precision, return tuples/booleans/None and failures.
+Language-level TypeError/IndexError can map to typed Rust errors with preserved
+meaning. Rust does not need to mimic Python's garbage collector or dynamic
+types, but its observable object/collection behavior must be specified.</p>
+<p>Do not create hundreds of empty public types to improve counts. Introduce a
+type with one tested read/create/query/write slice, then fill its operation
+ledger. A Python binding of the new Rust core is optional; it is a useful later
+compatibility harness, not a prerequisite for an embeddable Rust library.</p>
+</article>
+<article id="roadmap" aria-label="IMPLEMENTATION_PLAN.md">
+<p class="source">Source: <a href="IMPLEMENTATION_PLAN.md">IMPLEMENTATION_PLAN.md</a></p>
+<h1 id="roadmap-implementation-roadmap-and-acceptance-gates">Implementation roadmap and acceptance gates</h1>
+<p>These are ordered work packages for a coding agent, not completed features.
+See the <a href="#overview">audited baseline</a>, <a href="#architecture">architecture</a> and
+<a href="#conformance">test contract</a>. Never report a phase complete solely because
+it compiles or a file renders. Every phase updates the per-symbol ledger and
+passes the cases named below. Estimates are relative: BRep, NURBS and SubD are
+major geometry-library work, not small binding exercises.</p>
+<h2 id="roadmap-dependency-order">Dependency order</h2>
+<pre><code class="language-text">P00 Oracle + operation ledger
+  └─ P01 Archive integrity + retained source + diagnostics
+       └─ P02 Math / IDs / units
+            └─ P03 Typed document, tables and attributes
+                 ├─ P04 Meshes + point collections + first round trip
+                 ├─ P05 Curves + NURBS
+                 └─ P06 Instances + scene consumer integration (after P04)
+                      └─ P07 Appearance + embedded assets (after P04)
+P03 + P04 + P05 + P06 ─ P08 General document writing
+P05 + P08 ─ P09 Surfaces + BReps + extrusions
+P07 + P08 ─ P10 Annotations + views + remaining document APIs
+P04 + P08 + P09 ─ P11 SubD + Draco + remaining operation closure
+P00..P11 ─ P12 Cross-platform, conformance and release
+</code></pre>
+<p>Work may overlap after interfaces are stable. Keep one owner for changes to
+the document model, diagnostics and writer. An implementation agent can use
+parallel workers only if authorized in its session; this document is a work
+map, not an instruction to spawn tasks now. Ship a tested vertical slice for
+each geometry family rather than waiting until the last phase to write any
+3DM data.</p>
+<h2 id="roadmap-p00-freeze-the-oracle-and-turn-the-surface-inventory-into-obligations">P00 — Freeze the oracle and turn the surface inventory into obligations</h2>
+<p>Inputs: the two checked-in runtime inventories and oracle lock. Own
+<code>tools/parity/</code>, <code>tests/conformance/</code>, <code>docs/parity/</code> and future CI wiring.</p>
+<p>Deliver:</p>
+<ul>
+<li>Obtain source matching the locked wheel, record the release source archive
+  hash/build flags and applicable OpenNURBS identity. Resolve the distribution
+  versus runtime version mismatch explicitly. The verified sdist is the source
+  reference until an exact release commit/build correspondence is established.</li>
+<li>Add an operation ledger with stable IDs for every target class member,
+  constructor overload, property getter/setter, enum value and collection
+  protocol. Deduplicate inherited implementations while retaining inherited
+  exposure obligations. Do not silently omit the BND iterator classes.</li>
+<li>Merge <code>.pyi</code>, runtime docstrings and <code>src/bindings/bnd_*.cpp/.h</code> Python
+  exports. Store source pointers, defaults and behavior-unknown entries.</li>
+<li>Create a language-neutral operation runner protocol and small Python oracle
+  generator. Create Rust runner skeleton that reports unsupported operations
+  distinctly. It is a test utility, not a new production backend.</li>
+<li>Add explicit CI fixtures and a target-free unit-test job; Python-dependent
+  conformance jobs use isolated, hash-pinned environments.</li>
+</ul>
+<p>Exit: the ledger covers all observed exports, unresolved overloads are listed,
+oracle snapshots are reproducible, and at least one point/transform case runs
+both languages with an intentional mismatch proving the comparator can fail.</p>
+<h2 id="roadmap-p01-make-archive-results-trustworthy">P01 — Make archive results trustworthy</h2>
+<p>Own <code>src/archive/*</code>, <code>src/diagnostics.rs</code>, and migrate <code>src/lib.rs</code> internals.</p>
+<p>Deliver:</p>
+<ul>
+<li>Retained ByteStore/spans, checked cursor, archive/version metadata, header-only
+  read, explicit document/record/count/string/decompression/depth budgets.</li>
+<li>CRC verification by actual OpenNURBS scope, including nested chunks and
+  class UUID exceptions. Verify EOF size/termination and trailing-data policy.</li>
+<li>One result per object/definition; remove silent definition parse drops.
+  Separate consumed/skipped/opaque/decoded data in coverage.</li>
+<li>Replace warning-string census parsing with structured diagnostics/census.
+  Preserve old APIs through clearly documented wrappers until consumers move.</li>
+<li>Start property/fuzz testing on truncation, mutated lengths, counts, CRCs,
+  unknown classes and malformed userdata; record failure offsets.</li>
+</ul>
+<p>Exit: damaged input never panics or allocates beyond limits; neighboring good
+records remain inspectable in recovery mode; strict operations reject the
+damaged required data; unchanged opaque bytes can be retrieved from the store.
+All previous public fixture and R06 index facts remain accounted for.</p>
+<p>First PR scope: source retention + definition diagnostics + corruption cases.
+Second PR: CRC/EOF/version/budget coverage. Avoid a single parser rewrite.</p>
+<h2 id="roadmap-p02-numerical-value-types-uuids-and-source-units">P02 — Numerical value types, UUIDs and source units</h2>
+<p>Own <code>src/math/*</code> and shared ID/unit contracts.</p>
+<p>Deliver Point2/3/4 float/double variants, vectors, intervals, Plane,
+BoundingBox, Line/Arc/Circle/Ellipse/Box/Sphere/Cone/Cylinder as exposed, and
+Transform operations and classification. Add methods according to the ledger;
+not all primitive types have the same constructor set.</p>
+<p>Document source-unit behavior, OpenNURBS unset values, tolerances, signed zero,
+non-finite inputs, precision conversion and degenerate geometry. Implement
+canonical/wire UUID conversions once and use them everywhere. Probe arithmetic,
+comparisons, vector normalization, inverse failures, bounds and intersections
+only for operations the oracle exposes.</p>
+<p>Exit: asymmetric noncommuting transforms, singular/inverse failure, mirrored
+and nonuniform scale, tiny affine-row residuals, zero vectors, degenerate
+intervals/bounds and unit-scale fixtures pass. Coordinates and IDs are not
+silently normalized or renamed. Each exposed primitive has creation/query
+cases; no math API gets blanket parity from <code>Transform::IDENTITY</code>.</p>
+<h2 id="roadmap-p03-mutable-file3dm-attributes-and-basic-tables">P03 — Mutable File3dm, attributes and basic tables</h2>
+<p>Own <code>src/document/*</code>, <code>src/attributes.rs</code> and identity integration.</p>
+<p>Deliver File3dm/File3dmObject and geometry handles; typed object, layer,
+material, group and instance-definition tables with find/iterate/add/delete.
+Decode metadata/settings/units/tolerances/document strings and complete modern
+object attributes, including visibility, colors/material sources, groups,
+names, IDs and object/geometry/document UserStrings. Older attribute layouts
+follow the archive matrix. Keep plugin userdata opaque until supported.</p>
+<p>Define live view semantics, index stability, duplicate/nil ID behavior,
+ordering, nil versus missing fields, locked/default layer behavior, Unicode,
+user-string replacement/deletion and cache invalidation. Add typed read/edit
+coverage reports. Start a minimal point+layer+metadata writer with correct
+reference tables; P08 broadens writing rather than starting from zero.</p>
+<p>Exit: create a point on a named layer with metadata in Rust; Python reads exact
+IDs/coordinates/layer/strings; Python-authored fixture reads identically in
+Rust; deleting/editing a view has expected owner behavior. Unrecognized
+attribute fields remain visible in coverage.</p>
+<h2 id="roadmap-p04-native-mesh-cached-mesh-data-and-point-collections">P04 — Native Mesh, cached mesh data and point collections</h2>
+<p>Own <code>geometry/mesh.rs</code>, <code>geometry/pointcloud.rs</code> and their codecs.</p>
+<p>Deliver compressed/raw array decoding with bounded expansion and checksums;
+native triangles/quads, float/double vertices, normals, UVs, colors, topology,
+ngon-related source data, point clouds/grids/lists and supported modifiers.
+Add Mesh and point-cloud creation/query/mutation methods from the ledger.
+Read/write standalone Mesh payloads. Prepare cache helpers for BrepFace.GetMesh
+and Extrusion.GetMesh; full owning-class integration lands in P09.</p>
+<p>Exit: a mixed quad/triangle mesh with duplicate positions, UV seam, vertex
+colors, double vertices and invalid-index variant matches the oracle. After
+normal/face/vertex edits, bounding/topology/cache data remains consistent.
+Missing cache and malformed cache are distinguishable. A display triangulation
+never erases the original modeling representation.</p>
+<h2 id="roadmap-p05-curves-and-nurbs-evaluation">P05 — Curves and NURBS evaluation</h2>
+<p>Own curve codecs and <code>geometry/{curve,nurbs_curve,polycurve}.rs</code>.</p>
+<p>Deliver LineCurve, ArcCurve, Polyline/PolylineCurve, PolyCurve, BezierCurve,
+NurbsCurve, CurveProxy; control-point/knot collections, rational weights,
+domains, dimensions, orientation, exposed constructors and mutation methods.
+Implement evaluation/derivatives/tangents, conversion, reversal, trimming and
+other operations actually present in the pinned ledger. Writer support ships
+with each curve family.</p>
+<p>Exit: degree 1/2/3/higher, rational circle, repeated knots, endpoint knots,
+closed/periodic, reversed/nested polycurves, 2D trim curves and degenerate
+fixtures compare sampled values and query outcomes. Preserve exact knot/control
+data on round trip and verify post-edit evaluations. Segment boundaries and
+derivative discontinuities get explicit one-sided cases.</p>
+<h2 id="roadmap-p06-assembly-semantics-and-existing-consumer-integration">P06 — Assembly semantics and existing consumer integration</h2>
+<p>Own instance resolution and scene/renderer integration; depends on P03/P04.</p>
+<p>Deliver resolved definition/member references, occurrence paths, parent/child
+matrix composition, shared geometry caching, ByParent/ByLayer presentation,
+linked-block metadata and missing/external reference policy. External files
+are referenced; resolving them requires caller-supplied path policy.
+Add graph diagnostics for cycles, duplicates and missing members. Integrate
+block edits with writer tracking.</p>
+<p>Migrate SceneDocument to the typed document/bridge adapter. Remove whole-IR
+JSON copying and repeated file decode where practical. Fix declared versus
+actual units. Export a complete occurrence graph in the Three.js adapter.
+Make the SVG renderer draw resolved occurrences and preserve explicit omissions.</p>
+<p>Exit: a nested asymmetric block repeated twice with rotation/translation,
+reflection and nonuniform scale has the same world coordinates and inherited
+styles as Python-composed reference values. Definition members are not double
+drawn. Cycles/missing definitions report bounded failures. R06 compares all
+definition/member IDs and per-reference matrices, not counts alone.</p>
+<h2 id="roadmap-p07-appearance-assets-and-material-inheritance">P07 — Appearance, assets and material inheritance</h2>
+<p>Own <code>appearance/*</code>; reuse current scene PBR/texture descriptors.</p>
+<p>Deliver legacy Material and PhysicallyBasedMaterial exposed methods/properties;
+textures/mapping transforms/channels/wrapping, embedded file bytes and paths,
+layer/object/face/instance assignments, source-vs-resolved material distinction,
+and supported RDK fields. Geometry-dependent UV operations depend on P04/P06.
+Preserve unknown render-content parameters with diagnostics and extend writer
+coverage. Use the existing <a href="../pbr-material-parity.md">PBR requirements</a>.</p>
+<p>Exit: non-default material scalar values, checker texture, seams, multiple
+mapping channels, embedded/external assets and instanced copies match Python
+field values and asset hashes. Absent data is not silently defaulted into a
+claim of parity. Visual rendering is an additional consumer test, not the
+definition of package API parity.</p>
+<h2 id="roadmap-p08-general-file3dm-writing-and-object-serialization">P08 — General File3dm writing and object serialization</h2>
+<p>Own <code>archive/writer.rs</code>, serialization, write options and version policy.</p>
+<p>Broaden earlier writers to document metadata, all supported tables, geometry,
+definitions/references, attributes/userdata and caches. Implement exposed
+File3dm byte-array/Encode/Decode methods and CommonObject Encode/Decode, with
+version/save-userdata/default/error behavior measured against Python.
+Do not mistake <code>import_exact_step</code> for a general writer.</p>
+<p>Introduce dirty-graph handling and opaque retention rules. Probe source UUID
+and table-index rewrite behavior on insert/delete. Probe exactly which target
+versions Python writes and what it intentionally drops; publish the tested
+read/write matrix rather than a broad unsupported version claim.</p>
+<p>Exit: Python→Rust→Python and Rust→Python→Rust edit round trips pass for P02–P07.
+Existing destination survives every refusal/error. Unknown records round-trip
+only where references/version remain safe; otherwise lossless mode refuses
+with the specific dependency. Byte-identical file output is not the semantic
+parity criterion.</p>
+<h2 id="roadmap-p09-surfaces-brep-topology-and-extrusions">P09 — Surfaces, BRep topology and extrusions</h2>
+<p>Own surface/BRep/extrusion APIs/codecs. This is one of the largest work packages.</p>
+<p>Deliver Surface/SurfaceProxy, NurbsSurface control points and knots,
+PlaneSurface/RevSurface, Extrusion profile/path/caps and exposed conversions;
+Brep/BrepFace/BrepEdge/BrepVertex plus current BrepTrim/BrepLoop collections.
+Preserve surfaces/2D trims/3D curves, proxy domains, adjacency, seam/singular
+trims, orientation and source cache ownership. Implement exposed constructors,
+queries, edits, validity/manifold/solid results and writer round trips.</p>
+<p>Exit: planar trimmed face with a hole, cylinder seam, sphere singularity,
+multi-face closed solid, open shell, flipped face, rational surface and capped/
+uncapped extrusion compare topology and sampled evaluations. Each cached
+render/analysis mesh stays attached to its original face and is compared
+separately. Invalid BReps preserve inspectable invalidity and failure behavior.
+Geometry is never accepted merely because its bbox/counts look correct.</p>
+<h2 id="roadmap-p10-remaining-documentmodeling-families">P10 — Remaining document/modeling families</h2>
+<p>Own annotations, dictionaries, settings, views and remaining appearance APIs.</p>
+<p>Deliver Text/TextDot/Leader/Dimension subclasses/Centermark, fonts and dimension
+styles, Hatch; linetypes and all remaining File3dm tables; viewports/cameras/
+projections/named views, lights, sun/environment/ground plane/workflow/render
+settings; RenderContent child trees, post effects, decals and mesh-modifier
+data; ArchivableDictionary and all remaining exposed common-object methods.</p>
+<p>This phase is driven by the operation ledger: every unassigned export must be
+assigned to a family and ticket. Do not stop at a hand-picked list of familiar
+classes. Include getters/setters, defaults, collections, serialization and
+failure cases for each family. Missing font/platform-dependent behavior is
+declared and tested; no CI skip counts as passing.</p>
+<p>Exit: every non-SubD/Draco export has an implemented and tested mapping or an
+explicit unresolved ticket. Final parity still requires closing those tickets.</p>
+<h2 id="roadmap-p11-subd-draco-and-remaining-operation-closure">P11 — SubD, Draco and remaining operation closure</h2>
+<p>Own SubD topology/evaluation/tags/iterators and compression adapter work.</p>
+<p>Implement current SubDVertex/SubDEdge/SubDFace access, incidence iterators,
+control-net operations, tags, cache invalidation, subdivision and exposed
+validity/serialization. Test boundaries, creases, extraordinary vertices,
+closed solids and both directions of iteration. Assess a compatible pure-Rust
+Draco implementation against the Python wrapper; bitstream/API interoperability
+must pass before admitting it. An FFI wrapper is outside the selected runtime
+architecture. If no suitable implementation exists, native Draco work remains
+a visible parity blocker.</p>
+<p>Exit: all primary target operation tickets close, including platform/type
+oddities and protocol behavior. No “not used by robotics” omission qualifies
+as 1:1 Python parity.</p>
+<h2 id="roadmap-p12-release-qualification-and-integration">P12 — Release qualification and integration</h2>
+<p>Run full inventory-to-ledger closure, source-version fixture matrix,
+differential operation suite, fuzz/regression corpus and cross-language edit
+round trips. Qualify macOS arm64/x86_64, Linux x86_64/aarch64, Windows x86_64
+with pinned oracle artifacts; list additional targets separately. Match each
+platform's expected behavior without assuming wheel inventories are identical.</p>
+<p>Publish tested runtime/dependency/MSRV/platform support, a capability matrix,
+remaining deviations (must be zero for an unqualified 1:1 release), changelog,
+licenses and runnable Rust migration examples. Benchmarks compare identical
+output contracts in release mode after conformance passes. Keep the native
+backend ledger separate if bridge code remains.</p>
+<p>Then update the Vitrus consumer to the standalone crate's pinned version and
+run the separate Clay robotics parity suite. A full package-parity release and
+full robotics-converter parity are different deliverables with different
+acceptance tests.</p>
+<h2 id="roadmap-first-concrete-agent-assignment">First concrete agent assignment</h2>
+<p>Implement P00's operation ledger/runner and P01's source-retention plus
+definition-diagnostic slice. Start with existing source and 11 passing tests.
+Do not begin a full BRep port first. Deliver one Rust-created point+layer+string
+model read by the Python oracle next (P02/P03). This establishes the complete
+create/read/edit/write testing loop that every later geometry family reuses.</p>
+</article>
+<article id="conformance" aria-label="CONFORMANCE.md">
+<p class="source">Source: <a href="CONFORMANCE.md">CONFORMANCE.md</a></p>
+<h1 id="conformance-conformance-fixtures-and-performance-contracts">Conformance, fixtures and performance contracts</h1>
+<p>Status: executable P00/P02 foundation, updated 2026-09-07. The inventory,
+overload-aware operation ledger, declarative Python/Rust runners, comparator,
+and eight foundational/geometry cases exist today. The ledger has 3,229 obligations, of which 122
+are marked <code>passing</code> only after the locked primary oracle and Rust results
+compare. Fuzz targets, document round trips and every remaining operation are
+still required; 122 passing operations do not qualify as package parity.</p>
+<h2 id="conformance-define-a-measurable-denominator">Define a measurable denominator</h2>
+<p>P00 creates one operation obligation for each constructor overload, method
+overload, property getter/setter, enum value and observable collection protocol
+in the pinned Python API. Reconcile runtime exports, binding source, stubs and
+behavior probes. Keep inherited exposure obligations, but deduplicate their
+implementation owner. The current JSON inventory and generated ledger include
+module-level exports, but binding-source pointers and behavior probes still
+need to close the ledger.</p>
+<p>The 212 classes and 3,359 public member slots are discovery counts, not the
+denominator of a compatibility score. Do not divide implemented Rust types by
+212. Report coverage by family and operation, plus unresolved discovery entries.
+Treat untested, skipped, stubbed, approximate, unsupported and blocked entries
+as incomplete. A reduced robotics subset may be released under its own name,
+but does not qualify as unqualified Python parity.</p>
+<p>Keep four independent dimensions for each operation:</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Example states</th>
+<th>Proof</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>API mapping</td>
+<td>unassigned, specified, implemented</td>
+<td>Python signature/defaults and Rust symbol</td>
+</tr>
+<tr>
+<td>Behavior</td>
+<td>untested, failing, passing, known-deviation</td>
+<td>Versioned differential case IDs and result hashes</td>
+</tr>
+<tr>
+<td>Representation / I/O</td>
+<td>no-codec, read-only, editable, writable</td>
+<td>Read/edit/write fixtures; field coverage</td>
+</tr>
+<tr>
+<td>Backend</td>
+<td>native, Rust bridge, opaque, missing</td>
+<td>Source symbol and feature-disabled build result</td>
+</tr>
+</tbody>
+</table></div>
+<p>Reading a curve does not prove curve evaluation. Evaluation does not prove
+mutation, serialization or collection aliasing. An opaque retained curve earns
+no curve API coverage. Different operations on one type can have different
+backend and behavior states.</p>
+<h2 id="conformance-case-and-result-protocol">Case and result protocol</h2>
+<p>Use versioned JSON requests and results for test runners. Both runners execute
+the same declarative operations; expected values come from the locked oracle,
+not from the current Rust result. The checked-in cases use this schema:</p>
+<pre><code class="language-json">{
+  &quot;schema&quot;: &quot;rhino3dm-rs.conformance-case.v1&quot;,
+  &quot;case_id&quot;: &quot;point.translation.v1&quot;,
+  &quot;comparison&quot;: {&quot;numeric&quot;: {&quot;atol&quot;: 1e-12, &quot;rtol&quot;: 1e-12}},
+  &quot;operations&quot;: [
+    {&quot;id&quot;: &quot;p&quot;, &quot;call&quot;: &quot;point3d.new&quot;, &quot;args&quot;: [2, 3, 5]},
+    {&quot;id&quot;: &quot;t&quot;, &quot;call&quot;: &quot;transform.translation&quot;, &quot;args&quot;: [7, 11, 13]},
+    {&quot;id&quot;: &quot;ok&quot;, &quot;call&quot;: &quot;point3d.transform&quot;, &quot;receiver&quot;: &quot;p&quot;, &quot;args&quot;: [{&quot;ref&quot;: &quot;t&quot;}]}
+  ],
+  &quot;observe&quot;: [&quot;p&quot;, &quot;ok&quot;]
+}
+</code></pre>
+<p>Run the real pair with the isolated pinned oracle, then compare results:</p>
+<pre><code class="language-bash">cargo run --quiet --bin rhino3dm-conformance -- tests/conformance/cases/math-basics-v1.json &gt; /tmp/rust.json
+/path/to/pinned/python tools/parity/run_python_cases.py --expect-distribution 8.32.1 tests/conformance/cases/math-basics-v1.json &gt; /tmp/python.json
+/path/to/pinned/python tools/parity/compare_cases.py --case tests/conformance/cases/math-basics-v1.json --python /tmp/python.json --rust /tmp/rust.json
+
+cargo build --bin rhino3dm-conformance
+/path/to/pinned/python tools/parity/run_conformance_suite.py --oracle-python /path/to/pinned/python
+</code></pre>
+<p>The comparator tests every nonnumeric field and ordering exactly. It permits
+only the case's named numeric tolerance. Current cases include noncommuting
+composition, inversion fallback, vector-to-transform narrowing, zero/unset
+sentinels, vector degeneracy, and axis-angle rotation. Before committing a new
+case, confirm the exact overload and return behavior in the oracle.</p>
+<p>Results carry status (<code>ok</code>, <code>failure</code>, <code>unsupported</code>, <code>runner_error</code>), return
+value, observed object state, structured failure category, warnings/coverage,
+oracle artifact fingerprint, case hash and runner revision. Unsupported is not
+the same as Python returning None or False. Encode NaN, infinities, unset
+sentinels, UUIDs, tuples and binary arrays using explicit tagged representations
+instead of relying on invalid JSON or lossy strings.</p>
+<p>Observe mutation before and after through both the original object and all
+available views. Record ordering, index boundary behavior, deletion, duplicate
+IDs, nil IDs, ownership and cache changes. Test invalid geometry that the oracle
+can represent, not only successful happy paths. Match error meaning; exact
+message text is required only when it is intentionally part of the documented
+compatibility contract.</p>
+<h2 id="conformance-fixture-corpus-and-provenance">Fixture corpus and provenance</h2>
+<p>Start with small redistributable, single-purpose fixtures generated by the
+locked Python wheel. Store the generator, seed/options, units, source artifact
+hash, fixture SHA-256, expected facts and redistribution provenance. Never
+regenerate goldens automatically during the Rust test run.</p>
+<div class="table-wrap"><table>
+<thead>
+<tr>
+<th>Corpus group</th>
+<th>Required variants</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Archive</td>
+<td>Empty/point models, nested chunks, header truncations, inconsistent sizes, CRC mutations, unknown class/userdata, recovery after one damaged record</td>
+</tr>
+<tr>
+<td>Versions</td>
+<td>Empirically supported read/write versions; older v2/v3/v4/v5 and modern v6/v7/v8 samples where available; unsupported cases explicit</td>
+</tr>
+<tr>
+<td>Math</td>
+<td>Asymmetric transforms, noncommuting composition, inverse failures, mirror/nonuniform scale, degeneracies, non-finite/unset values</td>
+</tr>
+<tr>
+<td>Document</td>
+<td>Units/tolerances, Unicode, attributes and source inheritance, each table, ordered iteration, replacement/deletion, duplicate/nil IDs</td>
+</tr>
+<tr>
+<td>Mesh</td>
+<td>Native triangle/quad mixtures, empty/invalid faces, float/double vertices, colors/normals/UVs, topology, bounded compressed arrays</td>
+</tr>
+<tr>
+<td>Curves</td>
+<td>Rational and nonrational NURBS, repeated knots, open/closed/periodic, reversed/domain-edited, polycurves and proxies</td>
+</tr>
+<tr>
+<td>BRep</td>
+<td>Trimmed face with hole, cylinder seam, sphere pole, open shell, closed solid, invalid adjacency, reversed face, rational surface, extrusions</td>
+</tr>
+<tr>
+<td>Instances</td>
+<td>At least two nesting levels, reused definitions, mirrored occurrence, missing references, cycles, definition-only members</td>
+</tr>
+<tr>
+<td>Appearance</td>
+<td>PBR/legacy values, ByParent/ByLayer inheritance, mappings/channels, embedded and missing texture assets, render-content trees</td>
+</tr>
+<tr>
+<td>Other</td>
+<td>Annotations/styles, dictionaries, viewports/lights/settings, SubD tags and incidence iteration, Draco interoperability</td>
+</tr>
+</tbody>
+</table></div>
+<p>Not every fixture can be authored by Python. For example, cached BRep display
+meshes may require an existing licensed fixture or a separately authored Rhino
+model; do not call nonexistent <code>Mesh.CreateFromBrep</code> to create them. Record the
+authoring tool/version and rights. Missing fixtures remain coverage gaps.</p>
+<p>Keep the public structural fixture as a fast regression. Keep R06 external:
+use the exact path/hash in the lock, open it read-only, and write derivatives
+to an isolated output directory. Do not commit the private model, modify it,
+or treat its successful census as a replacement for adversarial fixtures.
+Optional R06 tests clearly report absent input as skipped and do not count
+toward release coverage until the private qualification run is completed.</p>
+<h2 id="conformance-comparison-policies">Comparison policies</h2>
+<ul>
+<li>Compare IDs, topology indices, native face arity, enums, strings, flags,
+  counts, ordering and binary texture payloads exactly where observable.</li>
+<li>Preserve source floating-point coefficients without unrequested rounding.
+  For lossless decoding, compare exact stored representations when both APIs
+  expose that precision. Separately compare computed results with named,
+  operation-specific absolute/relative tolerances.</li>
+<li>Start double-precision arithmetic probes with strict tolerances, for example
+  <code>atol=1e-12</code> and <code>rtol=1e-12</code>, but do not impose those universally. Derive
+  appropriate limits from source precision, units, scale and upstream behavior;
+  commit the justification with the case. Single-precision mesh arrays require
+  a different profile. Never loosen a tolerance just to hide a discrepancy.</li>
+<li>Evaluate curves/surfaces at endpoints, interior parameters, repeated knots,
+  seam/pole locations and derivative discontinuities. Check domains, weights,
+  topology, orientation and exposed analytic results as well as sample points.</li>
+<li>Preserve R06's tiny affine-row residuals; verify predicates and composed
+  results against the oracle rather than snapping coefficients to zero.</li>
+<li>Normalize only declared nondeterminism, such as file timestamps or documented
+  writer-generated identifiers. Assert relationships for generated IDs. Never
+  erase all IDs, sort an ordered table or discard warnings to obtain equality.</li>
+<li>Use Python→Rust→Python and Rust→Python→Rust read/edit/write tests. Full-file
+  byte identity is not required when both writers legitimately choose different
+  compression or metadata. Explicit opaque retention promises are tested
+  separately on the bytes actually promised.</li>
+</ul>
+<h2 id="conformance-gates-per-implementation-change">Gates per implementation change</h2>
+<ol>
+<li>Update the operation ledger and source references with the code change.</li>
+<li>Add differential cases that fail on the previous implementation; include at
+   least one boundary/failure case per meaningful behavior family.</li>
+<li>Run formatting, compiler/lints and all workspace tests. Run the affected
+   differential family plus the public corpus and downstream scene/STEP tests.</li>
+<li>For decoder edits, add bounded-input tests and update fuzz seeds. Enforce
+   time/memory budgets in subprocesses; a caught allocation failure after
+   unbounded allocation is not an acceptable budget mechanism.</li>
+<li>For edits/writes, check cache invalidation, reference integrity, both-language
+   round trips and destination preservation under every simulated failure.</li>
+<li>Record commands, host/toolchain, oracle hash, fixture hashes, result files,
+   failures/skips and remaining limitations. A green smoke test cannot override
+   an unresolved contract discrepancy.</li>
+</ol>
+<p>Run cross-platform qualification on pinned wheels and a declared Rust MSRV.
+The initial macOS oracle cannot establish Linux/Windows behavior, availability,
+font handling or memory use. WebAssembly is a useful later target, not a tested
+platform claim today. The pure-Rust core should build and run its Rust-only
+tests without Python or C/C++ geometry runtimes installed.</p>
+<h2 id="conformance-benchmark-only-a-proven-shared-workload">Benchmark only a proven shared workload</h2>
+<p>Define the output contract before measuring: header read, structural index,
+complete document load, selected geometry evaluation, edit/write, or full Clay
+robotics conversion. Compare only the overlapping, verified contract and label
+it. Keep output facts/hash checks in every benchmark receipt. Count-only
+equality is insufficient for a complete-load or conversion comparison.</p>
+<p>For each benchmark, use identical immutable inputs and explicit release flags,
+oracle/runtime versions and host details. Run isolated workers sequentially;
+interleave/randomize Rust and Python trials. Report sample count, median and
+spread, failures, startup-included wall time and separately warm in-process
+time if useful. Distinguish cold/warm filesystem cache conditions. Do not
+flush global caches or disrupt other workloads just to claim a cold run.</p>
+<p>Measure peak resident memory of one fresh worker for each trial. Normalize
+macOS <code>ru_maxrss</code> bytes versus Linux KiB; include the interpreter and native
+extension in the Python process. Rust allocator accounting, Python tracemalloc
+and GPU allocation statistics are not interchangeable RSS metrics. Do not
+compare cumulative process high-water marks after multiple cases. If a
+converter spawns children, define and measure the process-tree memory contract
+instead of reporting only the parent. Keep elapsed-time and memory trials
+separate when instrumentation materially affects speed.</p>
+<p>Publish raw per-trial results, environment and exact commands. No speedup is
+claimed when one side omits required geometry or outputs. Library parity does
+not prove URDF/USD/MJCF/metadata equality; the Clay converter needs its own
+normalized file, mesh, transform, material and robot-semantics comparison.</p>
+<h2 id="conformance-release-definition">Release definition</h2>
+<p>An unqualified 1:1 release requires a closed, reviewed target inventory, every
+mapped operation passing its required behavior cases on declared platforms,
+no unresolved required deviations, read/edit/write fixture coverage, resource
+limits and fuzz qualification, and documented pure-Rust dependency provenance.
+Finite tests are evidence against the specified contract, not a mathematical
+proof for every possible CAD file. State the exact target version and tested
+scope with the release. Native-backend replacement progress is reported
+separately from observable API parity.</p>
+</article>
+<article id="handoff" aria-label="AGENT_HANDOFF.md">
+<p class="source">Source: <a href="AGENT_HANDOFF.md">AGENT_HANDOFF.md</a></p>
+<h1 id="handoff-coding-agent-handoff">Coding-agent handoff</h1>
+<p>This is a ready-to-use implementation brief, not a request that starts a new
+agent automatically. The current checkout contains an executable P00/P01/P02
+foundation, not merely an audit: retained source spans, bounded header reads,
+direct UUID CRC checking, recoverable definition parse outcomes, partial
+attribute coverage, an overload-aware ledger, and 122 paired-oracle foundation/geometry
+operation mappings. No general decoder, editable document API or general writer
+has been implemented.</p>
+<h2 id="handoff-mission">Mission</h2>
+<p>Implement observable API and behavior parity between the pure-Rust
+<code>rhino3dm-rs</code> library and the locked Python <code>rhino3dm</code> distribution. Preserve
+the existing scene, SVG and exact STEP consumers. Keep Python/OpenNURBS as
+development oracles only: no Python subprocess, Python runtime, C++ kernel,
+WebAssembly runtime wrapper or FFI geometry dependency in production Rust.
+Pure-Rust dependencies may be reused behind tested private adapters.</p>
+<p>Work in:</p>
+<pre><code class="language-text">/Users/lucas-vitrus/Documents/GitHub/rhino3dm-rs
+</code></pre>
+<p>Audited base: <code>34a8846b01db1d4aa9dafb11ab42f7a09776d30d</code>.
+Do not implement in the older nested crate under
+<code>vitrus-4/vitrus-convert/crates/rhino3dm-rs</code>. Treat that as a downstream
+migration, not the authoritative package. Inspect live git state before work;
+preserve all pre-existing edits and unrelated <code>.DS_Store</code> files. Do not reset
+or overwrite changes to make the tree match this audit.</p>
+<h2 id="handoff-read-before-coding">Read before coding</h2>
+<ol>
+<li><a href="#overview">README.md</a>: measured baseline, gap matrix and audit findings.</li>
+<li><a href="oracle-lock.json">oracle-lock.json</a>: artifact identity and external fixture.</li>
+<li><a href="#architecture">ARCHITECTURE.md</a>: module boundaries and data contracts.</li>
+<li><a href="#conformance">CONFORMANCE.md</a>: obligations, corpus and acceptance rules.</li>
+<li><a href="#roadmap">IMPLEMENTATION_PLAN.md</a>: P00–P12 dependencies.</li>
+<li>Current <code>src/lib.rs</code>, <code>src/scene.rs</code>, <code>src/step.rs</code>, renderer and tests.</li>
+</ol>
+<p>Current all-targets evidence is 22 passing workspace tests. Eight passing
+primary-oracle foundation/geometry cases cover 122 of 3,229 ledger obligations. It is not a
+1:1 package or complete 3DM writer. Scene RenderMesh is not the Python Mesh
+model; the bridge's geometry census is not typed BRep support. Never change
+these labels to claim progress.</p>
+<h2 id="handoff-exact-oracle">Exact oracle</h2>
+<p>Primary distribution: PyPI <code>rhino3dm==8.32.1</code>, initial CPython 3.10 macOS wheel
+and SHA-256 in the lock. That wheel reports runtime version <code>8.32.2</code>; preserve
+both fields and do not relabel or silently upgrade it. Its runtime inventory
+has 212 exported classes including enums and binding iterator classes.</p>
+<p>Clay regression: <code>rhino3dm==8.17.0</code>, 193 exported classes. The existing Clay
+Python is <code>/Users/lucas-vitrus/miniconda3/envs/Clay/bin/python</code>; use it read-only.
+Create isolated test environments for new installations. Pin platform-specific
+wheel hashes before running other OS/architecture oracles.</p>
+<p>The audit verified both primary wheel and sdist hashes. A matching upstream
+release commit/build correspondence is still unresolved; P00 must establish it
+or keep that source-provenance limitation explicit. Do not substitute the
+moving GitHub branch. Consult Python-conditional binding code, not JavaScript
+exports or RhinoCommon's larger API. The operation ledger now splits runtime
+pybind overload docstrings and the differential runner has two executable math
+cases, but it still lacks binding-source pointers, enum entries, fuzzing and CI.</p>
+<h2 id="handoff-start-with-these-checks">Start with these checks</h2>
+<p>Run these from the standalone repository. These commands exist today:</p>
+<pre><code class="language-bash">git status --short
+git rev-parse HEAD
+cargo test --workspace --all-targets
+cargo run --bin rhino3dm-index -- fixtures/structural-benchmark-v1.3dm
+</code></pre>
+<p>Regenerate a class inventory only into a new destination, using the verified
+oracle interpreter. The tool refuses an unexpected distribution or overwrite:</p>
+<pre><code class="language-bash">python tools/parity/inventory_python.py --help
+python tools/parity/inventory_python.py --expect-distribution 8.32.1 --output /tmp/python-api-8.32.1-new.json
+</code></pre>
+<p>Here <code>python</code> means the isolated, hash-verified primary oracle, not whichever
+interpreter happens to be on PATH. Compare fingerprints and structural content
+to the checked-in snapshot; platform/environment paths can legitimately differ.
+Do not make a temporary environment path part of the package's runtime setup.</p>
+<h2 id="handoff-first-implementation-slice">First implementation slice</h2>
+<p>Complete the remaining P00 and P01 work before starting broad geometry. The
+first bounded P01 source-retention/definition-diagnostic slice and P02 math
+seed have already landed.</p>
+<ol>
+<li>Create the operation ledger. Merge class inventories, module-level exports,
+   signatures/docstrings and pinned source. Enumerate overloaded constructors,
+   property mutation, enum values and collection protocols. Mark unknown
+   behavior unresolved, not compatible.</li>
+<li>Implement the JSON operation protocol and a small Python oracle runner,
+   then a Rust runner for existing points/transforms. Prove the comparator
+   rejects an intentionally changed value. Store fixture/case provenance.</li>
+<li>Add retained immutable source storage and checked spans to the archive
+   model without breaking existing callers. Keep one result/diagnostic for
+   every failed instance definition instead of silently dropping it.</li>
+<li>Add small malformed-definition and corrupted/truncated-input regression
+   cases. Update coverage to distinguish decoded, skipped, opaque and corrupt
+   data. Do not mark a skipped attribute as fully preserved.</li>
+<li>Run all existing tests plus new regressions and publish exact results.
+   Document the deferred CRC/budget work as the next P01 slice.</li>
+</ol>
+<p>Acceptance for this slice: public fixture behavior preserved; source bytes
+retrievable for opaque spans; a failed definition remains visible; bounded
+malformed inputs fail safely; one shared operation runs in both languages;
+ledger links implemented mappings to actual passing cases. An empty type or
+unsupported stub does not satisfy an operation.</p>
+<p>Next vertical slice: P02/P03, create a point with a named layer and UserStrings
+in Rust, write a new <code>.3dm</code>, read it in Python, edit and round-trip it. Then add
+meshes, curves and instances using the same architecture. Avoid beginning a
+large BRep rewrite before this complete testing loop exists.</p>
+<h2 id="handoff-how-to-maintain-progress">How to maintain progress</h2>
+<p>Create a machine-readable task ledger in P00 with stable phase/task IDs, exact
+dependencies, owned modules, acceptance case IDs, source references, status,
+result artifact paths and remaining blockers. Keep API-operation entries
+separate from work-package entries. Update both with each completed change.</p>
+<p>Use small reviewable changes aligned to the roadmap. Include the reason,
+observable behavior added, tests run and known limitations. Do not modify a
+golden to accept unexplained Rust behavior. Keep one coherent document/ID/
+diagnostic/writer contract if work is delegated in a future authorized session.</p>
+<p>A progress report must distinguish implemented, tested against the primary
+oracle, tested only against 8.17, bridge-backed, opaque-only, and not tested.
+Never infer a percentage from class names or record counts. A downstream
+robotics use case can prioritize work, but cannot remove target Python APIs
+from the 1:1 definition.</p>
+<h2 id="handoff-protect-source-files-and-consumers">Protect source files and consumers</h2>
+<p>The original R06 model is an external immutable fixture. Its absolute path,
+SHA-256 and Python census are in the lock. Read it only; create test outputs in
+new isolated directories. Verify its hash before and after qualification runs.
+Do not copy private CAD into public fixtures without permission.</p>
+<p>Keep existing strict STEP admission, texture-loss reporting, instance omission
+reporting and material requirements intact. Fix fidelity at the source; do not
+turn off a consumer's gate. Keep source units/UUIDs/original geometry distinct
+from display projections. No mesh replacement for missing exact geometry.</p>
+<p>General writing must preserve an existing destination on refusal or failure.
+Opaque data cannot be replayed after arbitrary table/version edits without
+reference-safety proof. Unknown plugin data must remain explicit. Performance
+work follows equivalent-output proof; the old 42× partial-index comparison is
+not evidence of a full conversion speedup.</p>
+<h2 id="handoff-definition-of-done">Definition of done</h2>
+<p>Use P12 and CONFORMANCE.md. Close every required operation and unresolved
+target-discovery item, qualify supported read/write versions and platforms,
+retain licenses and dependency provenance, and publish exact tested scope.
+Until then release honestly named subsets. Updating the Vitrus/Clay converter
+and proving robotics-output equivalence is a separate integration milestone.</p>
+</article>
+<footer>Generated from the adjacent Markdown sources with
+<code>python tools/parity/render_handoff.py</code>. No external fonts, scripts
+or image dependencies. Verify freshness with <code>--check</code>.</footer>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,61 @@
+{
+  "schema": "rhino3dm-rs.conformance-case.v1",
+  "case_id": "foundation.2d-and-interval.v1",
+  "comparison": {
+    "numeric": {
+      "atol": 1e-12,
+      "rtol": 1e-12,
+      "rationale": "Distance computation is compared as double-precision arithmetic. Stored coordinates and interval endpoints are compared exactly after mutation."
+    }
+  },
+  "operations": [
+    {"id": "point", "call": "point2d.new", "args": [1.25, -2.5]},
+    {"id": "point_same", "call": "point2d.new", "args": [1.25, -2.5]},
+    {"id": "point_other", "call": "point2d.new", "args": [-3.0, 4.0]},
+    {"id": "point_distance", "call": "point2d.distance_to", "receiver": "point", "args": [{"ref": "point_other"}]},
+    {"id": "point_sum", "call": "point2d.add_point", "receiver": "point", "args": [{"ref": "point_other"}]},
+    {"id": "point_equal", "call": "point2d.equals", "receiver": "point", "args": [{"ref": "point_same"}]},
+    {"id": "point_not_equal", "call": "point2d.equals", "receiver": "point", "args": [{"ref": "point_other"}]},
+    {"id": "point_inequality", "call": "point2d.not_equals", "receiver": "point", "args": [{"ref": "point_other"}]},
+    {"id": "point_set_x", "call": "point2d.set_coordinate", "receiver": "point", "args": ["X", 7.25]},
+    {"id": "point_set_y", "call": "point2d.set_coordinate", "receiver": "point", "args": ["Y", -1.0]},
+    {"id": "point_encoded", "call": "point2d.encode", "receiver": "point", "args": []},
+
+    {"id": "vector", "call": "vector2d.new", "args": [1.0, 2.0]},
+    {"id": "vector_same", "call": "vector2d.new", "args": [1.0, 2.0]},
+    {"id": "vector_other", "call": "vector2d.new", "args": [1.0, 3.0]},
+    {"id": "vector_equal", "call": "vector2d.equals", "receiver": "vector", "args": [{"ref": "vector_same"}]},
+    {"id": "vector_not_equal", "call": "vector2d.equals", "receiver": "vector", "args": [{"ref": "vector_other"}]},
+    {"id": "vector_inequality", "call": "vector2d.not_equals", "receiver": "vector", "args": [{"ref": "vector_other"}]},
+    {"id": "vector_set_x", "call": "vector2d.set_coordinate", "receiver": "vector", "args": ["X", 7.25]},
+    {"id": "vector_set_y", "call": "vector2d.set_coordinate", "receiver": "vector", "args": ["Y", -1.0]},
+    {"id": "vector_encoded", "call": "vector2d.encode", "receiver": "vector", "args": []},
+
+    {"id": "interval", "call": "interval.new", "args": [5.0, 2.0]},
+    {"id": "interval_same", "call": "interval.new", "args": [5.0, 2.0]},
+    {"id": "interval_other", "call": "interval.new", "args": [2.0, 5.0]},
+    {"id": "interval_equal", "call": "interval.equals", "receiver": "interval", "args": [{"ref": "interval_same"}]},
+    {"id": "interval_not_equal", "call": "interval.equals", "receiver": "interval", "args": [{"ref": "interval_other"}]},
+    {"id": "interval_inequality", "call": "interval.not_equals", "receiver": "interval", "args": [{"ref": "interval_other"}]},
+    {"id": "interval_set_t0", "call": "interval.set_endpoint", "receiver": "interval", "args": ["T0", 7.25]},
+    {"id": "interval_set_t1", "call": "interval.set_endpoint", "receiver": "interval", "args": ["T1", -1.0]}
+  ],
+  "observe": [
+    "point_distance",
+    "point_sum",
+    "point_equal",
+    "point_not_equal",
+    "point_inequality",
+    "point",
+    "point_encoded",
+    "vector_equal",
+    "vector_not_equal",
+    "vector_inequality",
+    "vector",
+    "vector_encoded",
+    "interval_equal",
+    "interval_not_equal",
+    "interval_inequality",
+    "interval"
+  ]
+}

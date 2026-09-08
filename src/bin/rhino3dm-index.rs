@@ -14,6 +14,14 @@ fn main() {
             }
             println!("archive_version={}", file.archive_version());
             println!("tables={}", file.archive().tables.len());
+            println!("layers={}", file.layers().len());
+            for layer in file.layers() {
+                println!(
+                    "layer_{}_name={}",
+                    layer.index,
+                    layer.name.replace('\n', "\\n")
+                );
+            }
             println!(
                 "instance_definitions_decoded={}",
                 file.archive().instance_definitions.len()
@@ -138,6 +146,16 @@ fn main() {
                     .filter(|object| object.point.is_some())
                     .count()
             );
+            println!("mutable_point_objects={}", file.objects().len());
+            println!("meshes={}", file.meshes().len());
+            for (index, mesh) in file.meshes().iter().enumerate() {
+                println!(
+                    "mesh_{index}_vertices={} mesh_{index}_triangles={}",
+                    mesh.vertices.len(),
+                    mesh.triangles.len()
+                );
+            }
+            println!("mesh_views={}", file.mesh_views().len());
             println!(
                 "instance_references_decoded={}",
                 file.archive()

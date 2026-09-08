@@ -1,0 +1,25 @@
+{
+  "schema": "rhino3dm-rs.conformance-case.v1",
+  "case_id": "foundation.point4d.v1",
+  "comparison": {
+    "numeric": {
+      "atol": 0.0,
+      "rtol": 0.0,
+      "rationale": "This case observes directly stored f64 coordinates and exact equality after property mutation."
+    }
+  },
+  "operations": [
+    {"id": "point", "call": "point4d.new", "args": [0.1, 0.2, 0.3, 0.4]},
+    {"id": "point_same", "call": "point4d.new", "args": [0.1, 0.2, 0.3, 0.4]},
+    {"id": "point_other", "call": "point4d.new", "args": [0.1, 0.2, 0.3, 1.0]},
+    {"id": "point_equal", "call": "point4d.equals", "receiver": "point", "args": [{"ref": "point_same"}]},
+    {"id": "point_not_equal", "call": "point4d.equals", "receiver": "point", "args": [{"ref": "point_other"}]},
+    {"id": "point_inequality", "call": "point4d.not_equals", "receiver": "point", "args": [{"ref": "point_other"}]},
+    {"id": "point_set_x", "call": "point4d.set_coordinate", "receiver": "point", "args": ["X", 7.25]},
+    {"id": "point_set_y", "call": "point4d.set_coordinate", "receiver": "point", "args": ["Y", -1.0]},
+    {"id": "point_set_z", "call": "point4d.set_coordinate", "receiver": "point", "args": ["Z", 0.0]},
+    {"id": "point_set_w", "call": "point4d.set_coordinate", "receiver": "point", "args": ["W", 2.0]},
+    {"id": "point_encoded", "call": "point4d.encode", "receiver": "point", "args": []}
+  ],
+  "observe": ["point_equal", "point_not_equal", "point_inequality", "point", "point_encoded"]
+}
