@@ -3661,6 +3661,53 @@ impl Arc {
     }
 }
 
+/// An axis-aligned box value corresponding to Python `rhino3dm.Box`.
+/// `PointAt` uses normalized box coordinates, while `ClosestPoint` and the
+/// scalar properties delegate to the retained `BoundingBox` endpoints.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Box {
+    pub bounding_box: BoundingBox,
+}
+
+impl Box {
+    pub const fn new(bounding_box: BoundingBox) -> Self {
+        Self { bounding_box }
+    }
+
+    pub fn is_valid(self) -> bool {
+        self.bounding_box.is_valid()
+    }
+
+    pub fn area(self) -> f64 {
+        self.bounding_box.area()
+    }
+
+    pub fn volume(self) -> f64 {
+        self.bounding_box.volume()
+    }
+
+    pub fn center(self) -> Point3d {
+        self.bounding_box.center()
+    }
+
+    pub fn point_at(self, x: f64, y: f64, z: f64) -> Point3d {
+        let diagonal = self.bounding_box.diagonal();
+        Point3d::new(
+            self.bounding_box.min.x + diagonal.x * x,
+            self.bounding_box.min.y + diagonal.y * y,
+            self.bounding_box.min.z + diagonal.z * z,
+        )
+    }
+
+    pub fn closest_point(self, point: Point3d) -> Point3d {
+        self.bounding_box.closest_point(point)
+    }
+
+    pub fn transform(&mut self, transform: Transform) -> bool {
+        self.bounding_box.transform(transform)
+    }
+}
+
 fn add_vectors(left: Vector3d, right: Vector3d) -> Vector3d {
     Vector3d::new(left.x + right.x, left.y + right.y, left.z + right.z)
 }
@@ -5991,6 +6038,33 @@ mod tests {
             ],
         };
         assert!(!arc.transform(nonuniform));
+    }
+
+    #[test]
+    fn box_evaluation_matches_bounding_box_parameter_contract() {
+        let mut box_value = Box::new(BoundingBox::from_coordinates(1.0, 2.0, 3.0, 4.0, 6.0, 8.0));
+        assert!(box_value.is_valid());
+        assert_eq!(box_value.area(), 94.0);
+        assert_eq!(box_value.volume(), 60.0);
+        assert_eq!(box_value.center(), Point3d::new(2.5, 4.0, 5.5));
+        assert_eq!(
+            box_value.point_at(0.0, 0.0, 0.0),
+            Point3d::new(1.0, 2.0, 3.0)
+        );
+        assert_eq!(
+            box_value.point_at(1.0, 1.0, 1.0),
+            Point3d::new(4.0, 6.0, 8.0)
+        );
+        assert_eq!(
+            box_value.point_at(2.0, 3.0, 4.0),
+            Point3d::new(7.0, 14.0, 23.0)
+        );
+        assert_eq!(
+            box_value.closest_point(Point3d::new(9.0, 9.0, 9.0)),
+            Point3d::new(4.0, 6.0, 8.0)
+        );
+        assert!(box_value.transform(Transform::translation(1.0, 2.0, 3.0)));
+        assert_eq!(box_value.center(), Point3d::new(3.5, 6.0, 8.5));
     }
 
     #[test]

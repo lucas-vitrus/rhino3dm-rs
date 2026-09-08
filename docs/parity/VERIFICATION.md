@@ -130,13 +130,13 @@ latitude/longitude circle construction. `Arc` covers angle-domain evaluation,
 endpoints/midpoint, bounds, closest queries, trimming, reversal, and
 conformal-transform admission.
 
-This is an oracle-shaped analytic slice, not completion of P02: Box, Cone,
+This is an oracle-shaped analytic slice, not completion of P02: Cone,
 Cylinder, UUID contracts, units/tolerances, and the remaining
 non-finite/intersection edge matrix are still open.
 
 | Check | Result |
 | --- | --- |
-| `cargo test --workspace --all-targets` | PASS: 52 library tests + 3 renderer tests; binary targets had no unit tests |
+| `cargo test --workspace --all-targets` | PASS: 53 library tests + 3 renderer tests; binary targets had no unit tests |
 | `cargo clippy --workspace --all-targets -- -D warnings` | PASS |
 | `cargo fmt --all` and `git diff --check` | PASS |
 | Paired `math-basics-v1` Python/Rust conformance | PASS with `atol=rtol=1e-12`; covers noncommuting composition, inverse fallback, Point3d transform, Vector3d mutation and observed f32 narrowing in `Translation(Vector3d)` |
@@ -149,6 +149,7 @@ non-finite/intersection edge matrix are still open.
 | P02 Circle value-object slice | PASS: constructors, evaluation, bounds, closest point/parameter, plane membership, mutation, and conformal/nonuniform transform behavior |
 | P02 Sphere value-object slice | PASS: spherical evaluation, normals, poles, closest parameters/points, and latitude/longitude circle construction |
 | P02 Arc value-object slice | PASS: angle-domain evaluation, bounds, closest queries, trimming, reversal, and conformal/nonuniform transform behavior |
+| P02 Box value-object slice | PASS: normalized point evaluation, validity, area/volume/center, closest point, and transform behavior |
 | Paired `foundation-point4d-v1` Python/Rust conformance | PASS with exact numeric comparison; covers Point4d construction, four mutable coordinates, equality, and encoding |
 | Paired `geometry-line-v1` Python/Rust conformance | PASS with `atol=rtol=1e-12`; covers mutable endpoints, direction/length/tangent/validity, extrapolating `PointAt`, degenerate behavior, and in-place transform |
 | Overload-aware operation ledger generation | PASS: 3,229 obligations, 122 paired-case-backed `passing` mappings, 1,044 unassessed and 2,063 runtime/stub divergences |
