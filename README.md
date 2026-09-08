@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="assets/rhino3dm-rs.png" alt="Rhino3dm RS — native Rust foundations for Rhino 3DM" width="371">
+  <img src="assets/rhino3dm-rs-benchmark.png" alt="rhino3dm-rs structural benchmark: 2.30 ms versus rhino3dm Python at 32.90 ms, 14 times faster on the verified shared workload" width="100%">
+</p>
+
+<p align="center">
+  <img src="assets/rhino3dm-rs-hero.png" alt="Rhino3dm RS connects Rust and Rhino 3DM" width="100%">
 </p>
 
 <p align="center">
