@@ -1,19 +1,39 @@
 <p align="center">
-  <img src="assets/rhino3dm-rs-hero.svg" alt="rhino3dm-rs — native 3DM archives, decoded in pure Rust" width="100%">
+  <img src="assets/rhino3dm-rs.png" alt="Rhino3dm RS — native Rust foundations for Rhino 3DM" width="371">
 </p>
 
 <p align="center">
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
 </p>
 
-`rhino3dm-rs` is a pure-Rust foundation for inspecting native Rhino `.3dm`
-archives and admitting exact engineering STEP-to-Rhino B-rep transfer without
-Rhino, OpenNURBS, CPython, WebAssembly, or FFI. It indexes archive structure,
-projects recovered semantic data for render planning, and reports losses
-explicitly instead of presenting incomplete geometry as a successful decode.
+`rhino3dm-rs` brings native Rhino `.3dm` inspection to Rust: a small,
+deterministic foundation for CAD services, robotics, build pipelines, and
+render tooling that cannot depend on Rhino, OpenNURBS, CPython, WebAssembly,
+or FFI. It indexes real archives, preserves the semantics it can prove, and
+makes unsupported geometry and metadata visible instead of quietly replacing
+them with approximations.
 
-> **Early-stage API:** archive framing and the typed records below are usable;
-> complete curve, mesh, Brep, and extrusion APIs are still in progress.
+> [!WARNING]
+> **Compatibility status: not yet a 1:1 replacement for Python `rhino3dm`.**
+> The current Rust surface has strong native archive framing, document
+> metadata, points, instance graphs, bounded math, mesh/point-cloud slices,
+> and a strict STEP admission path. Complete curves, Breps, extrusions,
+> document mutation, materials, and the broader Python API remain in progress.
+> See the [Python compatibility roadmap](docs/parity/README.md) for the
+> feature-by-feature status and conformance plan.
+
+## Fast on the shared path
+
+On the repository's reproducible Apple Silicon structural benchmark,
+`rhino3dm-rs` completed the identical archive/object/attribute/user-string/
+instance traversal in a **2.30 ms median**, compared with **32.90 ms** for
+Python `rhino3dm` 8.17.0: **14.3× faster** for that verified shared subset.
+The fixture has matching object and metadata census results in both runtimes.
+
+That is a focused structural-read result—not a claim of faster full geometry
+decoding, rendering, writing, or complete Python API parity. Raw samples,
+environment details, and the exact fixture are checked in at
+[`benchmarks/results/latest.json`](benchmarks/results/latest.json).
 
 ## Python compatibility roadmap
 
