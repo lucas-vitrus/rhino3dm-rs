@@ -3708,6 +3708,66 @@ impl Box {
     }
 }
 
+/// A finite or infinite-height analytic cylinder corresponding to Python
+/// `rhino3dm.Cylinder`. Height endpoints are retained as signed values so a
+/// negative constructor height preserves the observed `Height1/Height2`
+/// orientation rather than being normalized away.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Cylinder {
+    pub base_circle: Circle,
+    pub height1: f64,
+    pub height2: f64,
+}
+
+impl Cylinder {
+    pub const fn new(base_circle: Circle, height: f64) -> Self {
+        Self {
+            base_circle,
+            height1: 0.0,
+            height2: height,
+        }
+    }
+
+    pub const fn axis(self) -> Vector3d {
+        self.base_circle.normal()
+    }
+
+    pub fn center(self) -> Point3d {
+        self.base_circle.center().add_vector(scale_vector(
+            self.axis(),
+            (self.height1 + self.height2) / 2.0,
+        ))
+    }
+
+    pub const fn radius(self) -> f64 {
+        self.base_circle.radius
+    }
+
+    pub const fn total_height(self) -> f64 {
+        (self.height2 - self.height1).abs()
+    }
+
+    pub const fn is_finite(self) -> bool {
+        self.height1.is_finite() && self.height2.is_finite()
+    }
+
+    pub fn is_valid(self) -> bool {
+        self.base_circle.is_valid() && self.is_finite()
+    }
+
+    pub fn circle_at(self, height: f64) -> Circle {
+        let mut circle = self.base_circle;
+        circle.translate(scale_vector(self.axis(), height));
+        circle
+    }
+}
+
+impl Default for Cylinder {
+    fn default() -> Self {
+        Self::new(Circle::default(), 0.0)
+    }
+}
+
 fn add_vectors(left: Vector3d, right: Vector3d) -> Vector3d {
     Vector3d::new(left.x + right.x, left.y + right.y, left.z + right.z)
 }
@@ -6065,6 +6125,32 @@ mod tests {
         );
         assert!(box_value.transform(Transform::translation(1.0, 2.0, 3.0)));
         assert_eq!(box_value.center(), Point3d::new(3.5, 6.0, 8.5));
+    }
+
+    #[test]
+    fn cylinder_preserves_signed_height_and_circle_at_axis_contract() {
+        let cylinder = Cylinder::new(Circle::with_center(Point3d::new(1.0, 2.0, 3.0), 2.0), 4.0);
+        assert!(cylinder.is_valid());
+        assert!(cylinder.is_finite());
+        assert_eq!(cylinder.height1, 0.0);
+        assert_eq!(cylinder.height2, 4.0);
+        assert_eq!(cylinder.total_height(), 4.0);
+        assert_eq!(cylinder.axis(), Vector3d::new(0.0, 0.0, 1.0));
+        assert_eq!(cylinder.center(), Point3d::new(1.0, 2.0, 5.0));
+        assert_eq!(
+            cylinder.circle_at(-1.0).center(),
+            Point3d::new(1.0, 2.0, 2.0)
+        );
+        assert_eq!(
+            cylinder.circle_at(4.0).center(),
+            Point3d::new(1.0, 2.0, 7.0)
+        );
+
+        let negative = Cylinder::new(Circle::new(2.0), -3.0);
+        assert!(negative.is_valid());
+        assert_eq!((negative.height1, negative.height2), (0.0, -3.0));
+        assert_eq!(negative.total_height(), 3.0);
+        assert_eq!(negative.center(), Point3d::new(0.0, 0.0, -1.5));
     }
 
     #[test]

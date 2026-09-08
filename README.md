@@ -83,6 +83,7 @@ overload-aware ledger remains the source of truth: it currently contains
 - [x] Implement the bounded analytic `Plane`, `Circle`, and `Sphere` evaluation slice.
 - [x] Implement the bounded analytic `Arc` evaluation, trimming, reversal, and transform slice.
 - [x] Implement the bounded analytic `Box` value/evaluation slice.
+- [x] Implement the bounded analytic `Cylinder` axis/height/section slice.
 - [x] Cover unset sentinels, single-precision narrowing, mutation, predicates, and source units.
 - [ ] Complete UUID semantics and the remaining primitive value objects.
 - [ ] Complete non-finite, degenerate, intersection, and edge-case parity across all foundations.
