@@ -1295,16 +1295,40 @@ impl Default for Mesh {
     }
 }
 
+/// A point-cloud item snapshot corresponding to Python's `PointCloudItem`.
+/// Mutations should go through the indexed setters on [`PointCloud`], which
+/// preserve channel allocation and Python's default-value behavior.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PointCloudItem {
+    pub index: usize,
+    pub location: Point3d,
+    pub normal: Vector3d,
+    pub color: [u8; 4],
+    pub hidden: bool,
+    pub value: f64,
+}
+
 /// A bounded point-cloud model corresponding to Python's `PointCloud` core
-/// collection. Optional per-item channels are added in later slices.
+/// collection. Optional channels remain optional so `contains_*` distinguishes
+/// a missing channel from a channel populated with per-point defaults.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PointCloud {
     pub points: Vec<Point3d>,
+    pub normals: Option<Vec<Vector3d>>,
+    pub colors: Option<Vec<[u8; 4]>>,
+    pub hidden_flags: Option<Vec<bool>>,
+    pub values: Option<Vec<f64>>,
 }
 
 impl PointCloud {
     pub const fn new() -> Self {
-        Self { points: Vec::new() }
+        Self {
+            points: Vec::new(),
+            normals: None,
+            colors: None,
+            hidden_flags: None,
+            values: None,
+        }
     }
 
     pub fn count(&self) -> usize {
@@ -1312,15 +1336,271 @@ impl PointCloud {
     }
 
     pub fn add(&mut self, point: Point3d) {
-        self.points.push(point);
+        self.append(point, None, None, None);
+    }
+
+    pub fn add_with_normal(&mut self, point: Point3d, normal: Vector3d) {
+        self.append(point, Some(normal), None, None);
+    }
+
+    pub fn add_with_color(&mut self, point: Point3d, color: [u8; 4]) {
+        self.append(point, None, Some(color), None);
+    }
+
+    pub fn add_with_normal_color(&mut self, point: Point3d, normal: Vector3d, color: [u8; 4]) {
+        self.append(point, Some(normal), Some(color), None);
+    }
+
+    pub fn add_with_value(&mut self, point: Point3d, value: f64) {
+        self.append(point, None, None, Some(value));
+    }
+
+    pub fn add_with_all(&mut self, point: Point3d, normal: Vector3d, color: [u8; 4], value: f64) {
+        self.append(point, Some(normal), Some(color), Some(value));
+    }
+
+    pub fn add_range(&mut self, points: &[Point3d]) {
+        for &point in points {
+            self.add(point);
+        }
+    }
+
+    pub fn add_range_with_normals(&mut self, points: &[Point3d], normals: &[Vector3d]) {
+        if points.len() != normals.len() {
+            return;
+        }
+        for (&point, &normal) in points.iter().zip(normals) {
+            self.add_with_normal(point, normal);
+        }
+    }
+
+    pub fn add_range_with_colors(&mut self, points: &[Point3d], colors: &[[u8; 4]]) {
+        if points.len() != colors.len() {
+            return;
+        }
+        for (&point, &color) in points.iter().zip(colors) {
+            self.add_with_color(point, color);
+        }
+    }
+
+    pub fn add_range_with_values(&mut self, points: &[Point3d], values: &[f64]) {
+        if points.len() != values.len() {
+            return;
+        }
+        for (&point, &value) in points.iter().zip(values) {
+            self.add_with_value(point, value);
+        }
     }
 
     pub fn point_at(&self, index: usize) -> Option<Point3d> {
         self.points.get(index).copied()
     }
 
+    pub fn item_at(&self, index: usize) -> Option<PointCloudItem> {
+        let location = self.point_at(index)?;
+        Some(PointCloudItem {
+            index,
+            location,
+            normal: self
+                .normals
+                .as_ref()
+                .and_then(|values| values.get(index).copied())
+                .unwrap_or_else(Vector3d::unset),
+            color: self
+                .colors
+                .as_ref()
+                .and_then(|values| values.get(index).copied())
+                .unwrap_or([255, 255, 255, 0]),
+            hidden: self
+                .hidden_flags
+                .as_ref()
+                .and_then(|values| values.get(index).copied())
+                .unwrap_or(false),
+            value: self
+                .values
+                .as_ref()
+                .and_then(|values| values.get(index).copied())
+                .unwrap_or(UNSET_VALUE),
+        })
+    }
+
+    pub fn set_location(&mut self, index: usize, point: Point3d) -> bool {
+        let Some(destination) = self.points.get_mut(index) else {
+            return false;
+        };
+        *destination = point;
+        true
+    }
+
+    pub fn set_normal(&mut self, index: usize, normal: Vector3d) -> bool {
+        if index >= self.count() {
+            return false;
+        }
+        self.ensure_normals();
+        self.normals.as_mut().unwrap()[index] = normal;
+        true
+    }
+
+    pub fn set_color(&mut self, index: usize, color: [u8; 4]) -> bool {
+        if index >= self.count() {
+            return false;
+        }
+        self.ensure_colors();
+        self.colors.as_mut().unwrap()[index] = color;
+        true
+    }
+
+    pub fn set_hidden(&mut self, index: usize, hidden: bool) -> bool {
+        if index >= self.count() {
+            return false;
+        }
+        self.ensure_hidden_flags();
+        self.hidden_flags.as_mut().unwrap()[index] = hidden;
+        true
+    }
+
+    pub fn set_value(&mut self, index: usize, value: f64) -> bool {
+        if index >= self.count() {
+            return false;
+        }
+        self.ensure_values();
+        self.values.as_mut().unwrap()[index] = value;
+        true
+    }
+
+    pub fn contains_normals(&self) -> bool {
+        self.normals.is_some()
+    }
+
+    pub fn contains_colors(&self) -> bool {
+        self.colors.is_some()
+    }
+
+    pub fn contains_hidden_flags(&self) -> bool {
+        self.hidden_flags.is_some()
+    }
+
+    pub fn contains_values(&self) -> bool {
+        self.values.is_some()
+    }
+
+    pub fn hidden_point_count(&self) -> usize {
+        self.hidden_flags
+            .as_ref()
+            .map(|values| values.iter().filter(|&&hidden| hidden).count())
+            .unwrap_or(0)
+    }
+
+    pub fn normals(&self) -> Option<&[Vector3d]> {
+        self.normals.as_deref()
+    }
+
+    pub fn normals_or_empty(&self) -> &[Vector3d] {
+        self.normals.as_deref().unwrap_or(&[])
+    }
+
+    pub fn colors(&self) -> Option<&[[u8; 4]]> {
+        self.colors.as_deref()
+    }
+
+    pub fn colors_or_empty(&self) -> &[[u8; 4]] {
+        self.colors.as_deref().unwrap_or(&[])
+    }
+
+    pub fn values(&self) -> Option<&[f64]> {
+        self.values.as_deref()
+    }
+
+    pub fn values_or_empty(&self) -> &[f64] {
+        self.values.as_deref().unwrap_or(&[])
+    }
+
+    pub fn clear_normals(&mut self) {
+        self.normals = None;
+    }
+
+    pub fn clear_colors(&mut self) {
+        self.colors = None;
+    }
+
+    pub fn clear_hidden_flags(&mut self) {
+        self.hidden_flags = None;
+    }
+
+    pub fn clear_values(&mut self) {
+        self.values = None;
+    }
+
     pub fn clear(&mut self) {
         self.points.clear();
+        self.clear_normals();
+        self.clear_colors();
+        self.clear_hidden_flags();
+        self.clear_values();
+    }
+
+    fn append(
+        &mut self,
+        point: Point3d,
+        normal: Option<Vector3d>,
+        color: Option<[u8; 4]>,
+        value: Option<f64>,
+    ) {
+        let had_normals = self.normals.is_some();
+        let had_colors = self.colors.is_some();
+        let had_values = self.values.is_some();
+        if normal.is_some() {
+            self.ensure_normals();
+        }
+        if color.is_some() {
+            self.ensure_colors();
+        }
+        if value.is_some() {
+            self.ensure_values();
+        }
+        self.points.push(point);
+        if had_normals || normal.is_some() {
+            self.normals
+                .as_mut()
+                .unwrap()
+                .push(normal.unwrap_or_default());
+        }
+        if had_colors || color.is_some() {
+            self.colors
+                .as_mut()
+                .unwrap()
+                .push(color.unwrap_or([0, 0, 0, 255]));
+        }
+        if had_values || value.is_some() {
+            self.values.as_mut().unwrap().push(value.unwrap_or(0.0));
+        }
+        if let Some(hidden_flags) = &mut self.hidden_flags {
+            hidden_flags.push(false);
+        }
+    }
+
+    fn ensure_normals(&mut self) {
+        if self.normals.is_none() {
+            self.normals = Some(vec![Vector3d::default(); self.count()]);
+        }
+    }
+
+    fn ensure_colors(&mut self) {
+        if self.colors.is_none() {
+            self.colors = Some(vec![[0, 0, 0, 255]; self.count()]);
+        }
+    }
+
+    fn ensure_hidden_flags(&mut self) {
+        if self.hidden_flags.is_none() {
+            self.hidden_flags = Some(vec![false; self.count()]);
+        }
+    }
+
+    fn ensure_values(&mut self) {
+        if self.values.is_none() {
+            self.values = Some(vec![0.0; self.count()]);
+        }
     }
 }
 
@@ -1942,6 +2222,11 @@ impl Vector3d {
 
     pub const fn new(x: f64, y: f64, z: f64) -> Self {
         Self { x, y, z }
+    }
+
+    /// Equivalent to Python's `Vector3d.Unset` value.
+    pub const fn unset() -> Self {
+        Self::new(UNSET_VALUE, UNSET_VALUE, UNSET_VALUE)
     }
 
     /// Equivalent to Python's `Vector3d.Encode()` coordinate mapping.
@@ -4674,6 +4959,51 @@ fn point_cloud_core_has_python_style_add_count_query_and_clear() {
     assert_eq!(cloud.point_at(2), None);
     cloud.clear();
     assert_eq!(cloud.count(), 0);
+}
+
+#[test]
+fn point_cloud_channels_backfill_defaults_and_clear_as_python_does() {
+    let mut cloud = PointCloud::new();
+    cloud.add(Point3d::new(1.0, 2.0, 3.0));
+    assert_eq!(cloud.item_at(0).unwrap().normal, Vector3d::unset());
+    assert_eq!(cloud.item_at(0).unwrap().color, [255, 255, 255, 0]);
+    assert_eq!(cloud.item_at(0).unwrap().value, UNSET_VALUE);
+
+    cloud.add_with_normal(Point3d::new(4.0, 5.0, 6.0), Vector3d::new(0.0, 0.0, 1.0));
+    assert_eq!(
+        cloud.normals_or_empty(),
+        &[Vector3d::default(), Vector3d::new(0.0, 0.0, 1.0)]
+    );
+    cloud.add_with_color(Point3d::new(7.0, 8.0, 9.0), [10, 20, 30, 40]);
+    assert_eq!(
+        cloud.colors_or_empty(),
+        &[[0, 0, 0, 255], [0, 0, 0, 255], [10, 20, 30, 40]]
+    );
+    cloud.add_with_value(Point3d::new(10.0, 11.0, 12.0), 3.5);
+    assert_eq!(cloud.values_or_empty(), &[0.0, 0.0, 0.0, 3.5]);
+
+    assert!(cloud.set_hidden(1, true));
+    assert_eq!(cloud.hidden_point_count(), 1);
+    assert!(cloud.item_at(1).unwrap().hidden);
+    assert!(cloud.set_value(1, 4.5));
+    assert_eq!(cloud.item_at(1).unwrap().value, 4.5);
+    assert!(cloud.contains_normals());
+    assert!(cloud.contains_colors());
+    assert!(cloud.contains_hidden_flags());
+    assert!(cloud.contains_values());
+
+    cloud.clear_normals();
+    cloud.clear_colors();
+    cloud.clear_hidden_flags();
+    cloud.clear_values();
+    assert!(!cloud.contains_normals());
+    assert!(!cloud.contains_colors());
+    assert!(!cloud.contains_hidden_flags());
+    assert!(!cloud.contains_values());
+    assert_eq!(cloud.item_at(1).unwrap().normal, Vector3d::unset());
+    assert_eq!(cloud.item_at(1).unwrap().color, [255, 255, 255, 0]);
+    assert_eq!(cloud.item_at(1).unwrap().value, UNSET_VALUE);
+    assert!(!cloud.item_at(1).unwrap().hidden);
 }
 
 #[test]

@@ -28,15 +28,15 @@ are never represented as an empty successful table.
 
 The first bounded P04 slice exposes native Rhino mesh tessellations decoded by
 the existing pure-Rust bridge through `File3dm::meshes()`. The projection
-preserves document-unit vertex positions and indexed triangle data while
-remaining explicit about its boundary: it is not yet the mutable Python
-`Mesh`, vertex/face collection, quad/ngon, UV/color, or mesh-writer API.
+preserves document-unit vertex positions and indexed display-triangle data.
+The companion `File3dm::mesh_views()` projection now overlays the source
+`ON_MeshFace` array so native triangle/quad arity is not lost.
 
 A Python-authored `rhino3dm` 8.17.0 fixture containing five vertices, one quad
 face and one triangle face was read by the Rust indexer as one mesh with five
-vertices and three display triangles. The quad-to-triangle expansion is
-reported as bridge tessellation data; the original native quad face is not
-claimed to be preserved by this projection.
+vertices and three display triangles. The quad-to-triangle expansion remains
+reported as bridge tessellation data, while `mesh_views()` recovers the two
+source faces as one quad and one triangle.
 
 ## P04 native mesh mutation seed
 
@@ -45,8 +45,9 @@ provide bounded vertex/face access plus add, replace, and clear operations.
 The installed Python `rhino3dm` 8.17.0 oracle establishes that
 `Mesh.Faces.AddFace` retains an invalid face while returning `-1`; valid
 triangle and quad counts exclude that retained invalid face. Rust matches that
-contract for the supported collection methods. This does not yet establish
-native source-mesh quad recovery, normals, UVs, colors, topology, or writing.
+contract for the supported collection methods. Native source-mesh quad
+recovery is now covered separately; normals, UVs, colors, topology, and
+writing remain bounded slices rather than complete Mesh parity.
 
 `Mesh.Vertices.Clear()` was also compared directly: Python retains the face
 records, clears the vertex collection, and makes those faces ineligible for
@@ -69,9 +70,10 @@ Python-authored color fixture recovers three native vertex colors in Rust.
 The next five P04 checks extend this bounded slice. UV channels are recovered
 from the bridge's two-float vertex channel and can be stored/cleared on Rust
 meshes. Deterministic undirected topology edges and edge lines are derived
-from valid triangle/quad faces. A bounded `PointCloud` core supports point
-addition, count, indexed query, and clear, but its optional normal/color/
-hidden/value item channels are not yet integrated. `Mesh::write` now emits a
+from valid triangle/quad faces. `PointCloud` now supports optional normal,
+color, hidden-flag, and scalar-value channels with Python-compatible defaults,
+indexed item snapshots/setters, channel presence queries, and clear methods.
+`Mesh::write` now emits a
 standalone native mesh with normals, UVs, and colors. Its Rust-authored quad
 path writes Rhino's native four-index face form and recomputes the exact
 class-data checksum scope; Python 8.17.0 reads it as one quad (zero triangles),
@@ -99,7 +101,7 @@ parity, and curve writing remain separate obligations.
 
 | Check | Result |
 | --- | --- |
-| `cargo test --workspace --all-targets` | PASS: 24 library tests + 3 renderer tests; binary targets had no unit tests |
+| `cargo test --workspace --all-targets` | PASS: 37 library tests + 3 renderer tests; binary targets had no unit tests |
 | `cargo clippy --workspace --all-targets -- -D warnings` | PASS |
 | `cargo fmt --all` and `git diff --check` | PASS |
 | Paired `math-basics-v1` Python/Rust conformance | PASS with `atol=rtol=1e-12`; covers noncommuting composition, inverse fallback, Point3d transform, Vector3d mutation and observed f32 narrowing in `Translation(Vector3d)` |
@@ -115,13 +117,14 @@ parity, and curve writing remain separate obligations.
 | P03 Rust point writer → Python `rhino3dm` readback | PASS: one point; exact coordinates `(1.25, 2.5, 3.75)`; named-point readback also preserves `NamedPoint` |
 | P03 Python-authored layer/name/UserString fixture → Rust `File3dm` read projection | PASS: one layer, one point, one object name, one UserString; metadata diagnostics remain explicit |
 | P04 Python-authored mixed mesh fixture → Rust `File3dm::meshes()` projection | PASS: one mesh, five vertices, three indexed triangles; quad expansion explicitly reported |
+| P04 native mesh-face recovery against Python 8.17.0 | PASS: source mixed fixture recovers two faces in `mesh_views()` as one triangle and one quad while bridge tessellation remains three triangles |
 | P04 mesh collection mutation against Python 8.17.0 | PASS: vertex addition, valid triangle/quad counts, invalid-face retention with `-1`, replacement and face clearing |
 | P04 vertex clear against Python 8.17.0 | PASS: vertices clear while face records remain; valid face counts become zero |
 | P04 mesh normals against Python 8.17.0 and native fixture | PASS: `ComputeNormals`, `Flip`, `UnitizeNormals`, `Clear`, and five native normals observed |
 | P04 mesh vertex colors against Python 8.17.0 and native fixture | PASS: indexed color addition/clear and three native four-byte color entries recovered |
 | P04 UV channel and topology slice | PASS: four native UV entries recovered; deterministic valid-face edge derivation and edge-line query tested |
-| P04 PointCloud core slice | PASS: point add/count/index/clear tested; optional item channels remain incomplete |
-| P04 source-less mesh writer → Python 8.17.0 readback | PASS: one Rust mesh read by Python as four vertices, two triangles, four colors, and four normals; quad arity is intentionally triangulated |
+| P04 PointCloud channel slice | PASS: normal/color/hidden/value defaults, backfill, indexed mutation, presence flags, and clearing tested against Python 8.17.0 observations |
+| P04 source-less mesh writer → Python 8.17.0 readback | PASS: one Rust mesh read by Python as four vertices, one native quad, zero triangles, four colors, and four normals |
 | P04 hidden vertex probe | INCOMPLETE finding: Python 8.17.0 `Hide`/`Show` calls produced no observable hidden-state change in the tested mesh |
 | P05 Python-authored line/polyline/NURBS fixture → Rust `File3dm::curves()` projection | PASS: three typed curve carriers; no sampled-point flattening |
 | Primary Python runtime inspection | Distribution 8.32.1, runtime 8.32.2; 212 exported classes including 49 enums |
