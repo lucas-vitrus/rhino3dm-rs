@@ -448,6 +448,21 @@ impl File3dm {
                     .iter()
                     .map(|normal| Vector3f::new(normal.x as f32, normal.y as f32, normal.z as f32))
                     .collect(),
+                vertex_colors: mesh
+                    .channels
+                    .iter()
+                    .find(|channel| channel.kind == 0x5248_0002 && channel.item_size == 4)
+                    .and_then(|channel| {
+                        let expected = usize::try_from(channel.count).ok()?.checked_mul(4)?;
+                        (channel.data.len() == expected).then(|| {
+                            channel
+                                .data
+                                .chunks_exact(4)
+                                .map(|chunk| [chunk[0], chunk[1], chunk[2], chunk[3]])
+                                .collect()
+                        })
+                    })
+                    .unwrap_or_default(),
             })
             .collect();
         let curves = match RhinoCodec.decode(
@@ -753,6 +768,7 @@ pub struct Mesh {
     pub vertices: Vec<Point3d>,
     pub faces: Vec<MeshFace>,
     pub normals: Vec<Vector3f>,
+    pub vertex_colors: Vec<[u8; 4]>,
 }
 
 impl Mesh {
@@ -762,6 +778,7 @@ impl Mesh {
             vertices: Vec::new(),
             faces: Vec::new(),
             normals: Vec::new(),
+            vertex_colors: Vec::new(),
         }
     }
 
@@ -825,6 +842,24 @@ impl Mesh {
     /// Remove all stored vertex normals.
     pub fn clear_normals(&mut self) {
         self.normals.clear();
+    }
+
+    /// Number of stored vertex colors.
+    pub fn color_count(&self) -> usize {
+        self.vertex_colors.len()
+    }
+
+    /// Add one RGBA vertex color. Python's three-channel `Add` maps to an
+    /// opaque color by convention; callers may supply any explicit alpha.
+    pub fn add_color(&mut self, color: [u8; 4]) -> usize {
+        let index = self.vertex_colors.len();
+        self.vertex_colors.push(color);
+        index
+    }
+
+    /// Remove all stored vertex colors.
+    pub fn clear_colors(&mut self) {
+        self.vertex_colors.clear();
     }
 
     /// Negate all stored normals, matching `Mesh.Normals.Flip()`.
@@ -3800,4 +3835,15 @@ fn mesh_normals_compute_flip_unitize_and_clear() {
     mesh.clear_normals();
     assert_eq!(mesh.normal_count(), 0);
     assert!(!mesh.unitize_normals());
+}
+
+#[test]
+fn mesh_vertex_colors_have_indexed_add_and_clear_semantics() {
+    let mut mesh = Mesh::new();
+    assert_eq!(mesh.color_count(), 0);
+    assert_eq!(mesh.add_color([1, 2, 3, 255]), 0);
+    assert_eq!(mesh.add_color([4, 5, 6, 7]), 1);
+    assert_eq!(mesh.vertex_colors, vec![[1, 2, 3, 255], [4, 5, 6, 7]]);
+    mesh.clear_colors();
+    assert_eq!(mesh.color_count(), 0);
 }

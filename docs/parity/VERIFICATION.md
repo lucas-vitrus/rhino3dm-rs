@@ -60,6 +60,12 @@ fixture reports five vertices, three display triangles, and five normals.
 Normals remain a bounded slice: source normal seams, UVs, colors, topology,
 and mesh writing are not yet complete.
 
+Vertex colors are now retained when the native bridge exposes the four-byte
+color channel. Rust-created meshes provide indexed RGBA color storage with
+add and clear operations; the Python 8.17.0 collection probe confirms the
+three-channel `Add(red, green, blue)` shape and indexed return behavior. A
+Python-authored color fixture recovers three native vertex colors in Rust.
+
 ## P05 curve read projection seed
 
 `File3dm::curves()` now exposes the bridge's typed curve carriers without
@@ -89,6 +95,7 @@ parity, and curve writing remain separate obligations.
 | P04 mesh collection mutation against Python 8.17.0 | PASS: vertex addition, valid triangle/quad counts, invalid-face retention with `-1`, replacement and face clearing |
 | P04 vertex clear against Python 8.17.0 | PASS: vertices clear while face records remain; valid face counts become zero |
 | P04 mesh normals against Python 8.17.0 and native fixture | PASS: `ComputeNormals`, `Flip`, `UnitizeNormals`, `Clear`, and five native normals observed |
+| P04 mesh vertex colors against Python 8.17.0 and native fixture | PASS: indexed color addition/clear and three native four-byte color entries recovered |
 | P05 Python-authored line/polyline/NURBS fixture → Rust `File3dm::curves()` projection | PASS: three typed curve carriers; no sampled-point flattening |
 | Primary Python runtime inspection | Distribution 8.32.1, runtime 8.32.2; 212 exported classes including 49 enums |
 | Clay Python runtime inspection | Distribution/runtime 8.17.0; 193 exported classes including 46 enums |
