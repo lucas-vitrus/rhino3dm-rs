@@ -1,8 +1,4 @@
 <p align="center">
-  <img src="assets/rhino3dm-rs-benchmark.png" alt="rhino3dm-rs structural benchmark: 2.30 ms versus rhino3dm Python at 32.90 ms, 14 times faster on the verified shared workload" width="100%">
-</p>
-
-<p align="center">
   <img src="assets/rhino3dm-rs-hero.png" alt="Rhino3dm RS connects Rust and Rhino 3DM" width="100%">
 </p>
 
@@ -27,6 +23,10 @@ them with approximations.
 > feature-by-feature status and conformance plan.
 
 ## Fast on the shared path
+
+<p align="center">
+  <img src="assets/rhino3dm-rs-benchmark.png" alt="rhino3dm-rs structural benchmark: 2.30 ms versus rhino3dm Python at 32.90 ms, 14 times faster on the verified shared workload" width="100%">
+</p>
 
 On the repository's reproducible Apple Silicon structural benchmark,
 `rhino3dm-rs` completed the identical archive/object/attribute/user-string/
