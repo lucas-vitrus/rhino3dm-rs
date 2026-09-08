@@ -803,6 +803,14 @@ impl Mesh {
         true
     }
 
+    /// Clear every vertex while retaining faces, matching
+    /// `Mesh.Vertices.Clear()`. Retained faces become invalid until matching
+    /// vertices are added again and therefore no longer contribute to valid
+    /// triangle/quad counts.
+    pub fn clear_vertices(&mut self) {
+        self.vertices.clear();
+    }
+
     /// Add a triangle face. The face is always retained. Returns its index
     /// when all indices are valid, or `-1` just like Python `AddFace`.
     pub fn add_triangle(&mut self, indices: [i32; 3]) -> i32 {
@@ -3618,4 +3626,22 @@ fn mesh_face_mutation_retains_invalid_faces_like_python() {
     assert_eq!(mesh.triangle_count(), 0);
     mesh.clear_faces();
     assert_eq!(mesh.face_count(), 0);
+}
+
+#[test]
+fn clearing_mesh_vertices_retains_faces_but_invalidates_their_counts() {
+    let mut mesh = Mesh::new();
+    for point in [
+        Point3d::new(0.0, 0.0, 0.0),
+        Point3d::new(1.0, 0.0, 0.0),
+        Point3d::new(0.0, 1.0, 0.0),
+    ] {
+        mesh.add_vertex(point);
+    }
+    assert_eq!(mesh.add_triangle([0, 1, 2]), 0);
+    mesh.clear_vertices();
+    assert_eq!(mesh.vertex_count(), 0);
+    assert_eq!(mesh.face_count(), 1);
+    assert_eq!(mesh.triangle_count(), 0);
+    assert_eq!(mesh.face(0), Some(MeshFace::Triangle([0, 1, 2])));
 }
