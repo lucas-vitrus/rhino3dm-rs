@@ -1392,6 +1392,111 @@ impl PointCloud {
         }
     }
 
+    pub fn insert_at(&mut self, index: usize, point: Point3d) -> bool {
+        self.insert_at_channels(index, point, None, None, None)
+    }
+
+    pub fn insert_at_with_normal(
+        &mut self,
+        index: usize,
+        point: Point3d,
+        normal: Vector3d,
+    ) -> bool {
+        self.insert_at_channels(index, point, Some(normal), None, None)
+    }
+
+    pub fn insert_at_with_color(&mut self, index: usize, point: Point3d, color: [u8; 4]) -> bool {
+        self.insert_at_channels(index, point, None, Some(color), None)
+    }
+
+    pub fn insert_at_with_value(&mut self, index: usize, point: Point3d, value: f64) -> bool {
+        self.insert_at_channels(index, point, None, None, Some(value))
+    }
+
+    pub fn insert_at_with_all(
+        &mut self,
+        index: usize,
+        point: Point3d,
+        normal: Vector3d,
+        color: [u8; 4],
+        value: f64,
+    ) -> bool {
+        self.insert_at_channels(index, point, Some(normal), Some(color), Some(value))
+    }
+
+    pub fn remove_at(&mut self, index: usize) -> bool {
+        if index >= self.count() {
+            return false;
+        }
+        self.points.remove(index);
+        if let Some(normals) = &mut self.normals {
+            if index < normals.len() {
+                normals.remove(index);
+            }
+        }
+        if let Some(colors) = &mut self.colors {
+            if index < colors.len() {
+                colors.remove(index);
+            }
+        }
+        if let Some(hidden_flags) = &mut self.hidden_flags {
+            if index < hidden_flags.len() {
+                hidden_flags.remove(index);
+            }
+        }
+        if let Some(values) = &mut self.values {
+            if index < values.len() {
+                values.remove(index);
+            }
+        }
+        true
+    }
+
+    pub fn closest_point(&self, test_point: Point3d) -> Option<usize> {
+        self.points
+            .iter()
+            .enumerate()
+            .filter_map(|(index, point)| {
+                let distance = (point.x - test_point.x).powi(2)
+                    + (point.y - test_point.y).powi(2)
+                    + (point.z - test_point.z).powi(2);
+                distance.is_finite().then_some((index, distance))
+            })
+            .min_by(|left, right| left.1.total_cmp(&right.1))
+            .map(|(index, _)| index)
+    }
+
+    pub fn merge(&mut self, other: &Self) {
+        let other_hidden = other.hidden_flags.clone();
+        if other_hidden.is_some() {
+            self.ensure_hidden_flags();
+        }
+        for index in 0..other.count() {
+            let destination = self.count();
+            self.append(
+                other.points[index],
+                other
+                    .normals
+                    .as_ref()
+                    .and_then(|values| values.get(index).copied()),
+                other
+                    .colors
+                    .as_ref()
+                    .and_then(|values| values.get(index).copied()),
+                other
+                    .values
+                    .as_ref()
+                    .and_then(|values| values.get(index).copied()),
+            );
+            if let Some(hidden_flags) = &mut self.hidden_flags {
+                hidden_flags[destination] = other_hidden
+                    .as_ref()
+                    .and_then(|values| values.get(index).copied())
+                    .unwrap_or(false);
+            }
+        }
+    }
+
     pub fn point_at(&self, index: usize) -> Option<Point3d> {
         self.points.get(index).copied()
     }
@@ -1577,6 +1682,54 @@ impl PointCloud {
         if let Some(hidden_flags) = &mut self.hidden_flags {
             hidden_flags.push(false);
         }
+    }
+
+    fn insert_at_channels(
+        &mut self,
+        index: usize,
+        point: Point3d,
+        normal: Option<Vector3d>,
+        color: Option<[u8; 4]>,
+        value: Option<f64>,
+    ) -> bool {
+        if index > self.count() {
+            return false;
+        }
+        let use_normals = self.normals.is_some() || normal.is_some();
+        let use_colors = self.colors.is_some() || color.is_some();
+        let use_values = self.values.is_some() || value.is_some();
+        if normal.is_some() {
+            self.ensure_normals();
+        }
+        if color.is_some() {
+            self.ensure_colors();
+        }
+        if value.is_some() {
+            self.ensure_values();
+        }
+        self.points.insert(index, point);
+        if use_normals {
+            self.normals
+                .as_mut()
+                .unwrap()
+                .insert(index, normal.unwrap_or_default());
+        }
+        if use_colors {
+            self.colors
+                .as_mut()
+                .unwrap()
+                .insert(index, color.unwrap_or([0, 0, 0, 255]));
+        }
+        if let Some(hidden_flags) = &mut self.hidden_flags {
+            hidden_flags.insert(index, false);
+        }
+        if use_values {
+            self.values
+                .as_mut()
+                .unwrap()
+                .insert(index, value.unwrap_or(0.0));
+        }
+        true
     }
 
     fn ensure_normals(&mut self) {
@@ -5004,6 +5157,44 @@ fn point_cloud_channels_backfill_defaults_and_clear_as_python_does() {
     assert_eq!(cloud.item_at(1).unwrap().color, [255, 255, 255, 0]);
     assert_eq!(cloud.item_at(1).unwrap().value, UNSET_VALUE);
     assert!(!cloud.item_at(1).unwrap().hidden);
+}
+
+#[test]
+fn point_cloud_collection_operations_match_bounded_python_shape() {
+    let mut cloud = PointCloud::new();
+    cloud.add(Point3d::new(0.0, 0.0, 0.0));
+    cloud.add(Point3d::new(2.0, 0.0, 0.0));
+
+    assert!(cloud.insert_at(1, Point3d::new(9.0, 9.0, 9.0)));
+    assert!(!cloud.insert_at(99, Point3d::default()));
+    assert_eq!(cloud.point_at(1), Some(Point3d::new(9.0, 9.0, 9.0)));
+    assert_eq!(cloud.closest_point(Point3d::new(8.0, 8.0, 8.0)), Some(1));
+    assert_eq!(PointCloud::new().closest_point(Point3d::default()), None);
+
+    assert!(cloud.remove_at(1));
+    assert!(!cloud.remove_at(99));
+
+    let mut other = PointCloud::new();
+    other.add_with_all(
+        Point3d::new(4.0, 0.0, 0.0),
+        Vector3d::new(0.0, 0.0, 1.0),
+        [10, 20, 30, 40],
+        7.5,
+    );
+    other.set_hidden(0, true);
+    cloud.merge(&other);
+    assert_eq!(cloud.count(), 3);
+    assert!(cloud.contains_normals());
+    assert!(cloud.contains_colors());
+    assert!(cloud.contains_hidden_flags());
+    assert!(cloud.contains_values());
+    assert_eq!(
+        cloud.item_at(2).unwrap().normal,
+        Vector3d::new(0.0, 0.0, 1.0)
+    );
+    assert_eq!(cloud.item_at(2).unwrap().color, [10, 20, 30, 40]);
+    assert!(cloud.item_at(2).unwrap().hidden);
+    assert_eq!(cloud.item_at(2).unwrap().value, 7.5);
 }
 
 #[test]

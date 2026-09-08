@@ -51,6 +51,102 @@ matter more than pretending every file was decoded completely.
 | Geometry census through the Rust `cadmpeg` bridge | Available as an explicit loss report |
 | General 3DM writing or mutation | Not supported; exact STEP import is the current narrow write path |
 
+## Python parity feature checklist
+
+This is the repository-level parity map for the pinned Python `rhino3dm`
+oracle. A checked item means the bounded Rust surface has an implementation
+and a passing regression or oracle-backed observation; an unchecked item is
+missing, partial, or still awaiting a conformance case. The exhaustive
+overload-aware ledger remains the source of truth: it currently contains
+3,229 obligations, so this summary is intentionally grouped by feature family.
+
+### P00 — oracle, inventory, and conformance harness
+
+- [x] Pin the Python distribution/runtime, exported symbols, stubs, and oracle lock.
+- [x] Generate an overload-aware operation ledger and declarative comparison cases.
+- [x] Run foundation cases with numeric comparison and mismatch rejection.
+- [ ] Attach source pointers and executable probes to every ledger obligation.
+- [ ] Add fuzz/property cases and CI closure reporting for the complete ledger.
+
+### P01 — native `.3dm` archive and object framing
+
+- [x] Validate signature/version, checked chunks, tables, object index, and EOF.
+- [x] Retain source bytes/spans and verify class-data and nested CRC boundaries.
+- [x] Bound source reads and report truncation, malformed records, and instance-definition diagnostics.
+- [ ] Complete decompression/resource budgets and explicit recovery-mode semantics.
+- [ ] Qualify the full historical archive/version and object-record matrix.
+
+### P02 — value objects and mathematical foundations
+
+- [x] Implement the covered `Point2d/3d/3f/4d`, `Vector3d/3f`, `Line`, `BoundingBox`, `Interval`, and `Transform` behavior.
+- [x] Cover unset sentinels, single-precision narrowing, mutation, predicates, and source units.
+- [ ] Complete UUID semantics and the remaining primitive value objects.
+- [ ] Complete non-finite, degenerate, intersection, and edge-case parity across all foundations.
+
+### P03 — document, tables, attributes, and basic objects
+
+- [x] Decode structural `File3dm` data, layers, points, names, visibility, basic attributes, and UserStrings.
+- [x] Decode instance definitions/references and transforms; expose the semantic `SceneDocument` projection.
+- [x] Provide the bounded Rust point writer and explicit metadata diagnostics.
+- [ ] Implement mutable object/table authoring and complete attributes/string/metadata round trips.
+- [ ] Qualify general document mutation against Python readback for all supported object types.
+
+### P04 — meshes and point collections
+
+- [x] Preserve mesh vertices, triangle/quad faces, invalid/duplicate-face behavior, mutation, normals, colors, UVs, and topology slices.
+- [x] Recover native imported face arity and write source-less Rust meshes with native quad faces.
+- [x] Implement PointCloud points, normal/color/hidden/value channels, Python defaults, item snapshots, indexed setters, presence queries, and clear operations.
+- [x] Implement PointCloud indexed insertion/removal, merge, and closest-point lookup for the covered collection contract.
+- [x] Keep display tessellation separate from native mesh-face semantics and report projection mismatches.
+- [ ] Preserve source-owned double-precision mesh data through independent compressed/raw decode paths.
+- [ ] Complete ngons, material/cache fields, full topology and hide/show behavior, and general imported-mesh writing.
+- [ ] Complete PointCloud native `.3dm` codec integration, live collection aliases, and remaining overloads.
+- [ ] Implement BrepFace and Extrusion mesh-cache parity.
+
+### P05 — curves
+
+- [x] Project typed line, polyline, and NURBS curve carriers without flattening them into display samples.
+- [ ] Implement the complete curve model family, evaluation, mutation, validity, and writing APIs.
+
+### P06 — blocks, instances, and scene graphs
+
+- [x] Decode instance definitions/references and transforms; expose the current `SceneDocument` graph.
+- [ ] Resolve occurrences, inheritance, caching, omission diagnostics, and complete Three.js/render graph parity.
+
+### P07 — materials, textures, and render content
+
+- [x] Preserve PBR scalar/mapping records, raw UV channels, and texture-assignment records where exposed by the bridge.
+- [ ] Complete materials, texture objects, embedded image bytes, render content, and PBR fixture round trips.
+
+### P08 — writing and round trips
+
+- [x] Write points, source-less meshes, native quad faces, and strict atomic exact STEP imports.
+- [ ] Implement general `File3dm` encode/decode, tables, attributes, dirty-graph behavior, and Python round trips.
+
+### P09 — Breps, surfaces, extrusions, and solids
+
+- [ ] Implement typed Brep/surface/extrusion decode, topology, trims, faces, edges, and parameter domains.
+- [ ] Implement evaluation, mutation, validity, transforms, mesh caches, and native writing.
+- [ ] Add exact Python differential fixtures for analytic and invalid/degenerate solid cases.
+
+### P10 — views, annotations, and technical output
+
+- [x] Provide deterministic technical SVG output and strict STEP admission with explicit omission/loss reporting.
+- [ ] Implement annotations, views, display modes, remaining document tables, and complete render-content assignment.
+- [ ] Close the parity ledger for view/annotation/table ownership and serialization semantics.
+
+### P11 — SubD, compression, and advanced geometry
+
+- [ ] Implement SubD topology and evaluation parity.
+- [ ] Implement Draco/compressed mesh decode with bounded resource accounting.
+- [ ] Add advanced geometry closure cases and native round-trip qualification.
+
+### P12 — release qualification and downstream integration
+
+- [ ] Qualify supported APIs across macOS/Linux/Windows and the pinned Rust toolchain.
+- [ ] Add deterministic fixture, benchmark, fuzz, and compatibility-release gates.
+- [ ] Complete robotics/CAD downstream contracts without weakening typed or fail-closed geometry boundaries.
+
 Unsupported or malformed structures return an error or carry a per-record
 diagnostic. Callers that require complete geometry must check the admission
 gate rather than relying on object counts alone.
