@@ -80,6 +80,7 @@ overload-aware ledger remains the source of truth: it currently contains
 ### P02 — value objects and mathematical foundations
 
 - [x] Implement the covered `Point2d/3d/3f/4d`, `Vector3d/3f`, `Line`, `BoundingBox`, `Interval`, and `Transform` behavior.
+- [x] Implement the bounded analytic `Plane`, `Circle`, and `Sphere` evaluation slice.
 - [x] Cover unset sentinels, single-precision narrowing, mutation, predicates, and source units.
 - [ ] Complete UUID semantics and the remaining primitive value objects.
 - [ ] Complete non-finite, degenerate, intersection, and edge-case parity across all foundations.

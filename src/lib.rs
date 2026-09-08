@@ -3288,6 +3288,159 @@ impl Default for Circle {
     }
 }
 
+/// An analytic sphere corresponding to Python `rhino3dm.Sphere`.
+///
+/// The equatorial frame is explicit so the spherical evaluation methods use
+/// the same coordinate convention as `Circle` and `Plane`. Brep/NURBS
+/// conversion is intentionally outside this value-object slice.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Sphere {
+    pub center: Point3d,
+    pub radius: f64,
+    pub equatorial_plane: Plane,
+}
+
+impl Sphere {
+    pub const fn new(center: Point3d, radius: f64) -> Self {
+        Self {
+            center,
+            radius,
+            equatorial_plane: Plane {
+                origin: center,
+                ..Plane::world_xy()
+            },
+        }
+    }
+
+    pub fn is_valid(self) -> bool {
+        self.radius.is_finite()
+            && self.radius > 0.0
+            && self.center.x.is_finite()
+            && self.center.y.is_finite()
+            && self.center.z.is_finite()
+            && self.equatorial_plane.is_valid()
+    }
+
+    pub const fn diameter(self) -> f64 {
+        self.radius * 2.0
+    }
+
+    pub fn normal_at(self, longitude_radians: f64, latitude_radians: f64) -> Vector3d {
+        let (latitude_sine, latitude_cosine) = latitude_radians.sin_cos();
+        let (longitude_sine, longitude_cosine) = longitude_radians.sin_cos();
+        add_vectors(
+            add_vectors(
+                scale_vector(
+                    self.equatorial_plane.x_axis,
+                    latitude_cosine * longitude_cosine,
+                ),
+                scale_vector(
+                    self.equatorial_plane.y_axis,
+                    latitude_cosine * longitude_sine,
+                ),
+            ),
+            scale_vector(self.equatorial_plane.z_axis, latitude_sine),
+        )
+    }
+
+    pub fn point_at(self, longitude_radians: f64, latitude_radians: f64) -> Point3d {
+        self.center.add_vector(scale_vector(
+            self.normal_at(longitude_radians, latitude_radians),
+            self.radius,
+        ))
+    }
+
+    pub fn closest_parameter(self, test_point: Point3d) -> (bool, f64, f64) {
+        let delta = Vector3d::new(
+            test_point.x - self.center.x,
+            test_point.y - self.center.y,
+            test_point.z - self.center.z,
+        );
+        let distance = delta.length();
+        if !distance.is_finite() || distance == 0.0 {
+            return (false, 0.0, std::f64::consts::FRAC_PI_2);
+        }
+        let normal = scale_vector(delta, 1.0 / distance);
+        let longitude = normal
+            .dot(self.equatorial_plane.y_axis)
+            .atan2(normal.dot(self.equatorial_plane.x_axis));
+        let latitude = normal.dot(self.equatorial_plane.z_axis).asin();
+        (true, longitude, latitude)
+    }
+
+    pub fn closest_point(self, test_point: Point3d) -> Point3d {
+        let delta = Vector3d::new(
+            test_point.x - self.center.x,
+            test_point.y - self.center.y,
+            test_point.z - self.center.z,
+        );
+        let distance = delta.length();
+        if !distance.is_finite() || distance == 0.0 || !self.radius.is_finite() {
+            return self.center;
+        }
+        self.center
+            .add_vector(scale_vector(delta, self.radius / distance))
+    }
+
+    pub fn north_pole(self) -> Point3d {
+        self.point_at(0.0, std::f64::consts::FRAC_PI_2)
+    }
+
+    pub fn south_pole(self) -> Point3d {
+        self.point_at(0.0, -std::f64::consts::FRAC_PI_2)
+    }
+
+    pub fn latitude_radians(self, latitude: f64) -> Circle {
+        let (sine, cosine) = latitude.sin_cos();
+        Circle::with_plane(
+            Plane {
+                origin: self.center.add_vector(scale_vector(
+                    self.equatorial_plane.z_axis,
+                    self.radius * sine,
+                )),
+                ..self.equatorial_plane
+            },
+            self.radius * cosine.abs(),
+        )
+    }
+
+    pub fn latitude_degrees(self, latitude: f64) -> Circle {
+        self.latitude_radians(latitude.to_radians())
+    }
+
+    pub fn longitude_radians(self, longitude: f64) -> Circle {
+        let (sine, cosine) = longitude.sin_cos();
+        let radial = add_vectors(
+            scale_vector(self.equatorial_plane.x_axis, cosine),
+            scale_vector(self.equatorial_plane.y_axis, sine),
+        );
+        let tangent = add_vectors(
+            scale_vector(self.equatorial_plane.x_axis, -sine),
+            scale_vector(self.equatorial_plane.y_axis, cosine),
+        );
+        Circle::with_plane(
+            Plane {
+                origin: self.center,
+                x_axis: self.equatorial_plane.z_axis,
+                y_axis: radial,
+                z_axis: tangent,
+            },
+            self.radius,
+        )
+    }
+
+    pub fn longitude_degrees(self, longitude: f64) -> Circle {
+        self.longitude_radians(longitude.to_radians())
+    }
+
+    pub fn encode(&self) -> Value {
+        serde_json::json!({
+            "Radius": self.radius,
+            "EquatorialPlane": self.equatorial_plane.encode()
+        })
+    }
+}
+
 fn add_vectors(left: Vector3d, right: Vector3d) -> Vector3d {
     Vector3d::new(left.x + right.x, left.y + right.y, left.z + right.z)
 }
@@ -5524,6 +5677,48 @@ mod tests {
         assert_eq!(circle.center(), Point3d::new(3.0, 5.0, 7.0));
         circle.reverse();
         assert_eq!(circle.normal(), Vector3d::new(0.0, 0.0, -1.0));
+    }
+
+    #[test]
+    fn sphere_evaluation_and_closest_queries_match_python_shape() {
+        let sphere = Sphere::new(Point3d::new(1.0, 2.0, 3.0), 2.0);
+        assert!(sphere.is_valid());
+        assert_eq!(sphere.diameter(), 4.0);
+        assert_eq!(sphere.point_at(0.0, 0.0), Point3d::new(3.0, 2.0, 3.0));
+        assert_eq!(
+            sphere.point_at(0.0, std::f64::consts::FRAC_PI_2),
+            sphere.north_pole()
+        );
+        assert_eq!(
+            sphere.point_at(0.0, -std::f64::consts::FRAC_PI_2),
+            sphere.south_pole()
+        );
+        let normal = sphere.normal_at(0.0, 0.0);
+        assert_eq!(normal, Vector3d::new(1.0, 0.0, 0.0));
+
+        let (found, longitude, latitude) = sphere.closest_parameter(Point3d::new(1.0, 4.0, 3.0));
+        assert!(found);
+        assert!((longitude - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
+        assert!(latitude.abs() < 1e-12);
+        assert_eq!(
+            sphere.closest_point(Point3d::new(1.0, 4.0, 3.0)),
+            Point3d::new(1.0, 4.0, 3.0)
+        );
+        let (found, _, latitude) = sphere.closest_parameter(sphere.center);
+        assert!(!found);
+        assert!((latitude - std::f64::consts::FRAC_PI_2).abs() < 1e-12);
+    }
+
+    #[test]
+    fn sphere_latitude_and_longitude_return_circles() {
+        let sphere = Sphere::new(Point3d::default(), 2.0);
+        let equator = sphere.latitude_radians(0.0);
+        assert_eq!(equator.center(), Point3d::default());
+        assert_eq!(equator.radius, 2.0);
+        let meridian = sphere.longitude_radians(0.0);
+        assert_eq!(meridian.center(), Point3d::default());
+        assert_eq!(meridian.radius, 2.0);
+        assert!(meridian.is_valid());
     }
 
     #[test]
