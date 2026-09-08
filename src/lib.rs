@@ -62,6 +62,9 @@ const INSTANCE_REFERENCE_CLASS: [u8; 16] = [
 const MESH_CLASS: [u8; 16] = [
     0xe4, 0xd4, 0xd7, 0x4e, 0x47, 0xe9, 0xd3, 0x11, 0xbf, 0xe5, 0x00, 0x10, 0x83, 0x01, 0x22, 0xf0,
 ];
+const POINT_CLOUD_CLASS: [u8; 16] = [
+    0x47, 0xf3, 0x88, 0x24, 0xfa, 0xf8, 0xd3, 0x11, 0xbf, 0xec, 0x00, 0x10, 0x83, 0x01, 0x22, 0xf0,
+];
 const BREP_CLASS: [u8; 16] = [
     0x43, 0xc2, 0x6f, 0xf0, 0x2a, 0xa3, 0x08, 0x46, 0x9d, 0xd8, 0xa7, 0xd2, 0xc4, 0xce, 0x2a, 0x36,
 ];
@@ -181,6 +184,7 @@ pub struct ObjectRecord {
     pub attribute_userdata_error: Option<String>,
     pub geometry_kind: GeometryKind,
     pub point: Option<Point3d>,
+    pub point_cloud: Option<PointCloud>,
     pub instance_reference: Option<InstanceReference>,
     pub geometry_error: Option<String>,
     pub framing_error: Option<String>,
@@ -230,6 +234,7 @@ pub struct File3dm {
     objects: Vec<PointObject>,
     meshes: Vec<Tessellation>,
     mesh_views: Vec<Mesh>,
+    point_clouds: Vec<PointCloud>,
     curves: Vec<Curve>,
     metadata_error: Option<String>,
 }
@@ -340,6 +345,7 @@ impl File3dm {
             objects: Vec::new(),
             meshes: Vec::new(),
             mesh_views: Vec::new(),
+            point_clouds: Vec::new(),
             curves: Vec::new(),
             metadata_error: None,
         }
@@ -407,6 +413,11 @@ impl File3dm {
                     attributes: record.attributes.clone().unwrap_or_default(),
                 })
             })
+            .collect();
+        let point_clouds = archive
+            .objects
+            .iter()
+            .filter_map(|record| record.point_cloud.clone())
             .collect();
         let (layers, mut metadata_error) = match decode_layers(source.as_bytes()) {
             Ok(layers) => (layers, None),
@@ -560,6 +571,7 @@ impl File3dm {
             objects,
             meshes,
             mesh_views,
+            point_clouds,
             curves,
             metadata_error,
         })
@@ -623,6 +635,13 @@ impl File3dm {
         &self.mesh_views
     }
 
+    /// Native point-cloud objects decoded directly from their OpenNURBS
+    /// class-data payload. Optional normal, color, and scalar channels are
+    /// retained when their native counts match the point count.
+    pub fn point_clouds(&self) -> &[PointCloud] {
+        &self.point_clouds
+    }
+
     /// Typed curve carriers decoded by the pure-Rust Rhino bridge.
     ///
     /// This is a read projection; mutable `rhino3dm.Curve` wrappers and
@@ -660,6 +679,17 @@ impl File3dm {
             geometry,
             attributes,
         });
+        index
+    }
+
+    /// Add a native point-cloud object to a newly-created document.
+    ///
+    /// The current writer emits the native point-cloud geometry for valid
+    /// multi-point clouds. Channel serialization is kept fail-closed until
+    /// the native minor-version payload writer is matched independently.
+    pub fn add_point_cloud(&mut self, cloud: PointCloud) -> usize {
+        let index = self.point_clouds.len();
+        self.point_clouds.push(cloud);
         index
     }
 
@@ -755,6 +785,71 @@ impl File3dm {
                     tolerance: None,
                 });
             }
+        }
+        for (cloud_index, cloud) in self.point_clouds.iter().enumerate() {
+            if cloud.count() < 2 {
+                return Err(Error::Unsupported {
+                    capability: "writing a native point cloud with fewer than two points",
+                });
+            }
+            if cloud.normals.is_some()
+                || cloud.colors.is_some()
+                || cloud.hidden_flags.is_some()
+                || cloud.values.is_some()
+            {
+                return Err(Error::Unsupported {
+                    capability: "writing native point-cloud channels",
+                });
+            }
+            let body_id = BodyId(format!("rhino3dm:object:point-cloud#{cloud_index}"));
+            let region_id = RegionId(format!("rhino3dm:object:point-cloud-region#{cloud_index}"));
+            let shell_id = ShellId(format!("rhino3dm:object:point-cloud-shell#{cloud_index}"));
+            let mut free_vertices = Vec::with_capacity(cloud.count());
+            for (point_index, point) in cloud.points.iter().enumerate() {
+                if !point.x.is_finite() || !point.y.is_finite() || !point.z.is_finite() {
+                    return Err(Error::Unsupported {
+                        capability: "a point cloud with non-finite coordinates",
+                    });
+                }
+                let point_id = PointId(format!(
+                    "rhino3dm:object:point-cloud#{cloud_index}.{point_index}"
+                ));
+                let vertex_id = VertexId(format!(
+                    "rhino3dm:object:point-cloud-vertex#{cloud_index}.{point_index}"
+                ));
+                ir.model.points.push(IrPoint {
+                    id: point_id.clone(),
+                    position: IrPoint3::new(point.x, point.y, point.z),
+                    source_object: None,
+                });
+                ir.model.vertices.push(Vertex {
+                    id: vertex_id.clone(),
+                    point: point_id,
+                    tolerance: None,
+                });
+                free_vertices.push(vertex_id);
+            }
+            ir.model.bodies.push(IrBody {
+                id: body_id.clone(),
+                kind: BodyKind::General,
+                regions: vec![region_id.clone()],
+                transform: None,
+                name: None,
+                color: None,
+                visible: Some(true),
+            });
+            ir.model.regions.push(Region {
+                id: region_id.clone(),
+                body: body_id,
+                shells: vec![shell_id.clone()],
+            });
+            ir.model.shells.push(Shell {
+                id: shell_id,
+                region: region_id,
+                faces: Vec::new(),
+                wire_edges: Vec::new(),
+                free_vertices,
+            });
         }
         let plan = RhinoEncoder::new(RhinoArchiveVersion::V8)
             .plan(EncodeInput {
@@ -1794,6 +1889,7 @@ pub struct Point2d {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeometryKind {
     Point,
+    PointCloud,
     InstanceReference,
     Mesh,
     Brep,
@@ -3554,6 +3650,7 @@ fn parse_object_record(bytes: &[u8], record: Chunk, archive_version: u32) -> Obj
         attribute_userdata_error: None,
         geometry_kind: GeometryKind::Other,
         point: None,
+        point_cloud: None,
         instance_reference: None,
         geometry_error: None,
         framing_error: None,
@@ -3670,18 +3767,22 @@ fn parse_object_record(bytes: &[u8], record: Chunk, archive_version: u32) -> Obj
                     _ => None,
                 };
                 let geometry_kind = classify_geometry(class_id);
-                let (point, instance_reference, geometry_error) = match geometry_kind {
+                let (point, point_cloud, instance_reference, geometry_error) = match geometry_kind {
                     GeometryKind::Point => match parse_point(bytes, data_chunk.body) {
-                        Ok(point) => (Some(point), None, None),
-                        Err(error) => (None, None, Some(error.to_string())),
+                        Ok(point) => (Some(point), None, None, None),
+                        Err(error) => (None, None, None, Some(error.to_string())),
+                    },
+                    GeometryKind::PointCloud => match parse_point_cloud(bytes, data_chunk.body) {
+                        Ok(point_cloud) => (None, Some(point_cloud), None, None),
+                        Err(error) => (None, None, None, Some(error.to_string())),
                     },
                     GeometryKind::InstanceReference => {
                         match parse_instance_reference(bytes, data_chunk.body) {
-                            Ok(reference) => (None, Some(reference), None),
-                            Err(error) => (None, None, Some(error.to_string())),
+                            Ok(reference) => (None, None, Some(reference), None),
+                            Err(error) => (None, None, None, Some(error.to_string())),
                         }
                     }
-                    _ => (None, None, None),
+                    _ => (None, None, None, None),
                 };
                 return Ok(ObjectRecord {
                     source: record.source,
@@ -3693,6 +3794,7 @@ fn parse_object_record(bytes: &[u8], record: Chunk, archive_version: u32) -> Obj
                     attribute_userdata_error,
                     geometry_kind,
                     point,
+                    point_cloud,
                     instance_reference,
                     geometry_error,
                     framing_error: None,
@@ -3729,6 +3831,7 @@ fn parse_object_record(bytes: &[u8], record: Chunk, archive_version: u32) -> Obj
 fn classify_geometry(class_id: [u8; 16]) -> GeometryKind {
     match class_id {
         POINT_CLASS => GeometryKind::Point,
+        POINT_CLOUD_CLASS => GeometryKind::PointCloud,
         INSTANCE_REFERENCE_CLASS => GeometryKind::InstanceReference,
         MESH_CLASS => GeometryKind::Mesh,
         BREP_CLASS => GeometryKind::Brep,
@@ -3755,6 +3858,151 @@ fn parse_point(bytes: &[u8], source: SourceRange) -> Result<Point3d, Error> {
         });
     }
     Ok(Point3d { x, y, z })
+}
+
+fn parse_point_cloud(bytes: &[u8], source: SourceRange) -> Result<PointCloud, Error> {
+    const MAX_POINT_CLOUD_POINTS: usize = 10_000_000;
+    let mut offset = usize::try_from(source.offset).map_err(|_| Error::OutOfBounds {
+        offset: source.offset,
+        end: u64::MAX,
+        bound: bytes.len() as u64,
+    })?;
+    let source_end = usize::try_from(end(source)?).map_err(|_| Error::OutOfBounds {
+        offset: source.offset,
+        end: u64::MAX,
+        bound: bytes.len() as u64,
+    })?;
+    let version = take_u8(bytes, &mut offset, source_end)?;
+    if version >> 4 != 1 {
+        return Err(Error::Unsupported {
+            capability: "a non-v1 ON_PointCloud payload",
+        });
+    }
+    let minor = version & 0x0f;
+    let point_count = usize::try_from(read_i32(bytes, &mut offset, source_end)?).map_err(|_| {
+        Error::InvalidChunkLength {
+            offset: offset.saturating_sub(4) as u64,
+            length: -1,
+        }
+    })?;
+    if point_count > MAX_POINT_CLOUD_POINTS {
+        return Err(Error::Unsupported {
+            capability: "a point cloud above the native point admission limit",
+        });
+    }
+    let mut points = Vec::with_capacity(point_count);
+    for _ in 0..point_count {
+        let point = Point3d {
+            x: read_f64(bytes, &mut offset, source_end)?,
+            y: read_f64(bytes, &mut offset, source_end)?,
+            z: read_f64(bytes, &mut offset, source_end)?,
+        };
+        if !point.x.is_finite() || !point.y.is_finite() || !point.z.is_finite() {
+            return Err(Error::Unsupported {
+                capability: "a point cloud with non-finite coordinates",
+            });
+        }
+        points.push(point);
+    }
+    // Native plane, bounding box, and flags. The plane is sixteen doubles in
+    // the ON_PointCloud payload: origin, three axes, and equation terms.
+    skip(bytes, &mut offset, source_end, 16 * 8 + 6 * 8 + 4)?;
+
+    let mut normals = None;
+    let mut colors = None;
+    let mut values = None;
+    if minor >= 1 {
+        let normal_count =
+            usize::try_from(read_i32(bytes, &mut offset, source_end)?).map_err(|_| {
+                Error::InvalidChunkLength {
+                    offset: offset.saturating_sub(4) as u64,
+                    length: -1,
+                }
+            })?;
+        if normal_count > MAX_POINT_CLOUD_POINTS {
+            return Err(Error::Unsupported {
+                capability: "a point-cloud normal channel above the native point admission limit",
+            });
+        }
+        let mut decoded = Vec::with_capacity(normal_count);
+        for _ in 0..normal_count {
+            let normal = Vector3d {
+                x: read_f64(bytes, &mut offset, source_end)?,
+                y: read_f64(bytes, &mut offset, source_end)?,
+                z: read_f64(bytes, &mut offset, source_end)?,
+            };
+            if !normal.x.is_finite() || !normal.y.is_finite() || !normal.z.is_finite() {
+                return Err(Error::Unsupported {
+                    capability: "a point cloud with non-finite normals",
+                });
+            }
+            decoded.push(normal);
+        }
+        if normal_count == point_count && normal_count != 0 {
+            normals = Some(decoded);
+        }
+
+        let color_count =
+            usize::try_from(read_i32(bytes, &mut offset, source_end)?).map_err(|_| {
+                Error::InvalidChunkLength {
+                    offset: offset.saturating_sub(4) as u64,
+                    length: -1,
+                }
+            })?;
+        if color_count > MAX_POINT_CLOUD_POINTS {
+            return Err(Error::Unsupported {
+                capability: "a point-cloud color channel above the native point admission limit",
+            });
+        }
+        let color_bytes = color_count.checked_mul(4).ok_or(Error::OutOfBounds {
+            offset: offset as u64,
+            end: u64::MAX,
+            bound: source_end as u64,
+        })?;
+        let raw_colors = take(bytes, &mut offset, source_end, color_bytes)?;
+        if color_count == point_count && color_count != 0 {
+            colors = Some(
+                raw_colors
+                    .chunks_exact(4)
+                    .map(|color| [color[0], color[1], color[2], 255 - color[3]])
+                    .collect(),
+            );
+        }
+    }
+    if minor >= 2 {
+        let value_count =
+            usize::try_from(read_i32(bytes, &mut offset, source_end)?).map_err(|_| {
+                Error::InvalidChunkLength {
+                    offset: offset.saturating_sub(4) as u64,
+                    length: -1,
+                }
+            })?;
+        if value_count > MAX_POINT_CLOUD_POINTS {
+            return Err(Error::Unsupported {
+                capability: "a point-cloud scalar channel above the native point admission limit",
+            });
+        }
+        let mut decoded = Vec::with_capacity(value_count);
+        for _ in 0..value_count {
+            let value = read_f64(bytes, &mut offset, source_end)?;
+            if !value.is_finite() {
+                return Err(Error::Unsupported {
+                    capability: "a point cloud with non-finite scalar values",
+                });
+            }
+            decoded.push(value);
+        }
+        if value_count == point_count && value_count != 0 {
+            values = Some(decoded);
+        }
+    }
+    Ok(PointCloud {
+        points,
+        normals,
+        colors,
+        hidden_flags: None,
+        values,
+    })
 }
 
 fn parse_instance_reference(bytes: &[u8], source: SourceRange) -> Result<InstanceReference, Error> {
@@ -4585,6 +4833,29 @@ mod tests {
     }
 
     #[test]
+    fn source_less_point_cloud_document_writes_and_reads_native_point_cloud() {
+        let path = std::env::temp_dir().join(format!(
+            "rhino3dm-rs-point-cloud-roundtrip-{}.3dm",
+            std::process::id()
+        ));
+        let mut cloud = PointCloud::new();
+        cloud.add(Point3d::new(1.0, 2.0, 3.0));
+        cloud.add(Point3d::new(4.0, 5.0, 6.0));
+        let mut document = File3dm::new();
+        assert_eq!(document.add_point_cloud(cloud.clone()), 0);
+        document.write(&path).expect("native point-cloud writer");
+
+        let decoded = File3dm::read(&path).expect("native point-cloud reader");
+        assert_eq!(decoded.archive().object_count(), 1);
+        assert_eq!(
+            decoded.archive().objects[0].geometry_kind,
+            GeometryKind::PointCloud
+        );
+        assert_eq!(decoded.point_clouds(), &[cloud]);
+        std::fs::remove_file(path).expect("remove temporary point-cloud archive");
+    }
+
+    #[test]
     fn named_point_uses_native_free_vertex_object_presentation() {
         let path = std::env::temp_dir().join(format!(
             "rhino3dm-rs-named-point-roundtrip-{}.3dm",
@@ -5157,6 +5428,57 @@ fn point_cloud_channels_backfill_defaults_and_clear_as_python_does() {
     assert_eq!(cloud.item_at(1).unwrap().color, [255, 255, 255, 0]);
     assert_eq!(cloud.item_at(1).unwrap().value, UNSET_VALUE);
     assert!(!cloud.item_at(1).unwrap().hidden);
+}
+
+#[test]
+fn native_point_cloud_payload_preserves_python_channel_values() {
+    let mut payload = vec![0x12_u8];
+    payload.extend(2_i32.to_le_bytes());
+    for point in [[1.0_f64, 2.0, 3.0], [4.0, 5.0, 6.0]] {
+        for coordinate in point {
+            payload.extend(coordinate.to_le_bytes());
+        }
+    }
+    payload.extend([0.0_f64; 16].into_iter().flat_map(f64::to_le_bytes));
+    payload.extend(
+        [1.0_f64, 1.0, 1.0, 6.0, 6.0, 6.0]
+            .into_iter()
+            .flat_map(f64::to_le_bytes),
+    );
+    payload.extend(0_i32.to_le_bytes());
+    payload.extend(2_i32.to_le_bytes());
+    for normal in [[0.0_f64, 0.0, 1.0], [0.0, 1.0, 0.0]] {
+        for component in normal {
+            payload.extend(component.to_le_bytes());
+        }
+    }
+    payload.extend(2_i32.to_le_bytes());
+    payload.extend([10_u8, 20, 30, 215, 50, 60, 70, 175]);
+    payload.extend(2_i32.to_le_bytes());
+    payload.extend(1.25_f64.to_le_bytes());
+    payload.extend(2.5_f64.to_le_bytes());
+
+    let cloud = parse_point_cloud(
+        &payload,
+        SourceRange {
+            offset: 0,
+            length: payload.len() as u64,
+        },
+    )
+    .expect("native point-cloud payload");
+    assert_eq!(
+        cloud.points,
+        vec![Point3d::new(1.0, 2.0, 3.0), Point3d::new(4.0, 5.0, 6.0)]
+    );
+    assert_eq!(
+        cloud.normals.as_deref(),
+        Some(&[Vector3d::new(0.0, 0.0, 1.0), Vector3d::new(0.0, 1.0, 0.0)][..])
+    );
+    assert_eq!(
+        cloud.colors.as_deref(),
+        Some(&[[10, 20, 30, 40], [50, 60, 70, 80]][..])
+    );
+    assert_eq!(cloud.values.as_deref(), Some(&[1.25, 2.5][..]));
 }
 
 #[test]

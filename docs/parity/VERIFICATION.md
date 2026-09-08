@@ -73,10 +73,12 @@ Deterministic undirected topology edges and edge lines are derived from valid
 triangle/quad faces. `PointCloud` supports optional normal, color, hidden-flag,
 and scalar-value channels with Python-compatible defaults, indexed item
 snapshots/setters, channel presence queries, clear methods, indexed insertion
-and removal, merge, and closest-point lookup. These collection operations are
-covered by focused regression tests against the observed Python 8.17.0 shape;
-native PointCloud archive codec integration and live collection aliases remain
-open.
+and removal, merge, and closest-point lookup. Native PointCloud objects are
+now decoded from `.3dm` class data with normal/color/scalar channels and
+source-less multi-point PointCloud objects can be written through the Rust
+encoder. Focused tests cover the native payload and the observed Python
+8.17.0 shape; native channel writing, single-point object emission, and live
+collection aliases remain open.
 `Mesh::write` now emits a
 standalone native mesh with normals, UVs, and colors. Its Rust-authored quad
 path writes Rhino's native four-index face form and recomputes the exact
@@ -105,7 +107,7 @@ parity, and curve writing remain separate obligations.
 
 | Check | Result |
 | --- | --- |
-| `cargo test --workspace --all-targets` | PASS: 38 library tests + 3 renderer tests; binary targets had no unit tests |
+| `cargo test --workspace --all-targets` | PASS: 40 library tests + 3 renderer tests; binary targets had no unit tests |
 | `cargo clippy --workspace --all-targets -- -D warnings` | PASS |
 | `cargo fmt --all` and `git diff --check` | PASS |
 | Paired `math-basics-v1` Python/Rust conformance | PASS with `atol=rtol=1e-12`; covers noncommuting composition, inverse fallback, Point3d transform, Vector3d mutation and observed f32 narrowing in `Translation(Vector3d)` |
@@ -127,7 +129,7 @@ parity, and curve writing remain separate obligations.
 | P04 mesh normals against Python 8.17.0 and native fixture | PASS: `ComputeNormals`, `Flip`, `UnitizeNormals`, `Clear`, and five native normals observed |
 | P04 mesh vertex colors against Python 8.17.0 and native fixture | PASS: indexed color addition/clear and three native four-byte color entries recovered |
 | P04 UV channel and topology slice | PASS: four native UV entries recovered; deterministic valid-face edge derivation and edge-line query tested |
-| P04 PointCloud collection/channel slice | PASS: normal/color/hidden/value defaults, backfill, indexed mutation, presence flags, clearing, indexed insertion/removal, merge, and closest-point lookup tested against Python 8.17.0 observations |
+| P04 PointCloud collection/native codec slice | PASS: normal/color/hidden/value defaults, backfill, indexed mutation, presence flags, clearing, indexed insertion/removal, merge, closest-point lookup, native object readback, and native minor-version channel decoding tested against Python 8.17.0 observations |
 | P04 source-less mesh writer → Python 8.17.0 readback | PASS: one Rust mesh read by Python as four vertices, one native quad, zero triangles, four colors, and four normals |
 | P04 hidden vertex probe | INCOMPLETE finding: Python 8.17.0 `Hide`/`Show` calls produced no observable hidden-state change in the tested mesh |
 | P05 Python-authored line/polyline/NURBS fixture → Rust `File3dm::curves()` projection | PASS: three typed curve carriers; no sampled-point flattening |

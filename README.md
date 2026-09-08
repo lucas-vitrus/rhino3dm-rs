@@ -97,10 +97,11 @@ overload-aware ledger remains the source of truth: it currently contains
 - [x] Recover native imported face arity and write source-less Rust meshes with native quad faces.
 - [x] Implement PointCloud points, normal/color/hidden/value channels, Python defaults, item snapshots, indexed setters, presence queries, and clear operations.
 - [x] Implement PointCloud indexed insertion/removal, merge, and closest-point lookup for the covered collection contract.
+- [x] Decode native PointCloud objects and their optional normal/color/scalar payloads; write source-less multi-point native PointCloud objects.
 - [x] Keep display tessellation separate from native mesh-face semantics and report projection mismatches.
 - [ ] Preserve source-owned double-precision mesh data through independent compressed/raw decode paths.
 - [ ] Complete ngons, material/cache fields, full topology and hide/show behavior, and general imported-mesh writing.
-- [ ] Complete PointCloud native `.3dm` codec integration, live collection aliases, and remaining overloads.
+- [ ] Serialize native PointCloud minor-version channels, single-point objects, live collection aliases, and remaining overloads.
 - [ ] Implement BrepFace and Extrusion mesh-cache parity.
 
 ### P05 — curves
