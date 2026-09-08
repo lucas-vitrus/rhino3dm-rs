@@ -1,0 +1,40 @@
+name: parity
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    name: Rust target-free checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace --all-targets
+
+  parity-artifacts:
+    name: Ledger and tool reproducibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check Python tool syntax
+        run: python -m py_compile tools/parity/*.py
+      - name: Regenerate and compare the pinned operation ledger
+        shell: bash
+        run: |
+          python tools/parity/generate_operation_ledger.py \
+            --inventory docs/parity/python-api-8.32.1.json \
+            --stub docs/parity/rhino3dm-8.32.1.pyi \
+            --oracle-lock docs/parity/oracle-lock.json \
+            --overrides docs/parity/operation-overrides-8.32.1.json \
+            --output "$RUNNER_TEMP/python-operation-ledger-8.32.1.json"
+          cmp docs/parity/python-operation-ledger-8.32.1.json \
+            "$RUNNER_TEMP/python-operation-ledger-8.32.1.json"

@@ -88,11 +88,38 @@ pub struct File3dmHeader {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReadLimits {
     pub max_source_bytes: usize,
+    pub max_table_records: usize,
+    pub max_object_records: usize,
+    pub max_instance_definition_records: usize,
+    pub reject_trailing_data: bool,
 }
 
 impl ReadLimits {
     pub const fn new(max_source_bytes: usize) -> Self {
-        Self { max_source_bytes }
+        Self {
+            max_source_bytes,
+            max_table_records: 1_000_000,
+            max_object_records: 10_000_000,
+            max_instance_definition_records: 1_000_000,
+            reject_trailing_data: true,
+        }
+    }
+
+    pub const fn with_record_limits(
+        mut self,
+        max_table_records: usize,
+        max_object_records: usize,
+        max_instance_definition_records: usize,
+    ) -> Self {
+        self.max_table_records = max_table_records;
+        self.max_object_records = max_object_records;
+        self.max_instance_definition_records = max_instance_definition_records;
+        self
+    }
+
+    pub const fn allow_trailing_data(mut self) -> Self {
+        self.reject_trailing_data = false;
+        self
     }
 }
 
@@ -403,7 +430,7 @@ impl File3dm {
             });
         }
         let header = parse_header(source.as_bytes())?;
-        let archive = scan_archive(source.as_bytes(), header.archive_version)?;
+        let archive = scan_archive_with_limits(source.as_bytes(), header.archive_version, &limits)?;
         let objects = archive
             .objects
             .iter()
@@ -1955,6 +1982,21 @@ pub struct BoundingBox {
     pub max: Point3d,
 }
 
+/// A right-handed coordinate plane corresponding to Python's `rhino3dm.Plane`.
+///
+/// The axes and origin remain explicit so callers can observe and edit the
+/// same value-object state exposed by the Python binding. Constructors that
+/// receive a normal or two directions orthonormalize those inputs; the
+/// zero/default constructor intentionally retains the binding's all-zero
+/// sentinel rather than manufacturing WorldXY.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Plane {
+    pub origin: Point3d,
+    pub x_axis: Vector3d,
+    pub y_axis: Vector3d,
+    pub z_axis: Vector3d,
+}
+
 /// OpenNURBS' public unset sentinel, used by several numeric Python APIs
 /// instead of `NaN` when an operation has no geometrically meaningful value.
 pub const UNSET_VALUE: f64 = -1.234_321_012_343_21e308;
@@ -2811,6 +2853,394 @@ impl BoundingBox {
     }
 }
 
+impl Plane {
+    pub const fn new() -> Self {
+        Self {
+            origin: Point3d::new(0.0, 0.0, 0.0),
+            x_axis: Vector3d::new(0.0, 0.0, 0.0),
+            y_axis: Vector3d::new(0.0, 0.0, 0.0),
+            z_axis: Vector3d::new(0.0, 0.0, 0.0),
+        }
+    }
+
+    pub const fn world_xy() -> Self {
+        Self {
+            origin: Point3d::new(0.0, 0.0, 0.0),
+            x_axis: Vector3d::new(1.0, 0.0, 0.0),
+            y_axis: Vector3d::new(0.0, 1.0, 0.0),
+            z_axis: Vector3d::new(0.0, 0.0, 1.0),
+        }
+    }
+
+    pub const fn world_yz() -> Self {
+        Self {
+            origin: Point3d::new(0.0, 0.0, 0.0),
+            x_axis: Vector3d::new(0.0, 1.0, 0.0),
+            y_axis: Vector3d::new(0.0, 0.0, 1.0),
+            z_axis: Vector3d::new(1.0, 0.0, 0.0),
+        }
+    }
+
+    pub const fn world_zx() -> Self {
+        Self {
+            origin: Point3d::new(0.0, 0.0, 0.0),
+            x_axis: Vector3d::new(0.0, 0.0, 1.0),
+            y_axis: Vector3d::new(1.0, 0.0, 0.0),
+            z_axis: Vector3d::new(0.0, 1.0, 0.0),
+        }
+    }
+
+    pub const fn unset() -> Self {
+        let value = UNSET_VALUE;
+        Self {
+            origin: Point3d::new(value, value, value),
+            x_axis: Vector3d::new(value, value, value),
+            y_axis: Vector3d::new(value, value, value),
+            z_axis: Vector3d::new(value, value, value),
+        }
+    }
+
+    /// Construct a plane from an origin and a normal, choosing a stable
+    /// in-plane axis without changing the supplied origin.
+    pub fn from_origin_normal(origin: Point3d, normal: Vector3d) -> Self {
+        let Some(z_axis) = normalized(normal) else {
+            return Self {
+                origin,
+                ..Self::new()
+            };
+        };
+        let reference = if z_axis.x.abs() < 0.9 {
+            Vector3d::new(1.0, 0.0, 0.0)
+        } else {
+            Vector3d::new(0.0, 1.0, 0.0)
+        };
+        let projection = reference.dot(z_axis);
+        let x_axis = normalized(Vector3d::new(
+            reference.x - z_axis.x * projection,
+            reference.y - z_axis.y * projection,
+            reference.z - z_axis.z * projection,
+        ))
+        .unwrap_or(Vector3d::new(1.0, 0.0, 0.0));
+        let y_axis = z_axis.cross(x_axis);
+        Self {
+            origin,
+            x_axis,
+            y_axis,
+            z_axis,
+        }
+    }
+
+    pub fn from_origin_points(origin: Point3d, x_point: Point3d, y_point: Point3d) -> Self {
+        Self::from_origin_axes(
+            Vector3d::new(
+                x_point.x - origin.x,
+                x_point.y - origin.y,
+                x_point.z - origin.z,
+            ),
+            Vector3d::new(
+                y_point.x - origin.x,
+                y_point.y - origin.y,
+                y_point.z - origin.z,
+            ),
+            origin,
+        )
+    }
+
+    pub fn from_origin_axes(x_axis: Vector3d, y_axis: Vector3d, origin: Point3d) -> Self {
+        let Some(x_axis) = normalized(x_axis) else {
+            return Self {
+                origin,
+                ..Self::new()
+            };
+        };
+        let Some(z_axis) = normalized(x_axis.cross(y_axis)) else {
+            return Self {
+                origin,
+                x_axis,
+                ..Self::new()
+            };
+        };
+        let y_axis = z_axis.cross(x_axis);
+        Self {
+            origin,
+            x_axis,
+            y_axis,
+            z_axis,
+        }
+    }
+
+    pub fn is_valid(self) -> bool {
+        const TOLERANCE: f64 = 1e-12;
+        let axes = [self.x_axis, self.y_axis, self.z_axis];
+        self.origin.x.is_finite()
+            && self.origin.y.is_finite()
+            && self.origin.z.is_finite()
+            && axes
+                .iter()
+                .flat_map(|axis| [axis.x, axis.y, axis.z])
+                .all(f64::is_finite)
+            && axes
+                .iter()
+                .all(|axis| (axis.length() - 1.0).abs() <= TOLERANCE)
+            && self.x_axis.dot(self.y_axis).abs() <= TOLERANCE
+            && self.y_axis.dot(self.z_axis).abs() <= TOLERANCE
+            && self.z_axis.dot(self.x_axis).abs() <= TOLERANCE
+            && self.x_axis.cross(self.y_axis).dot(self.z_axis) > 1.0 - TOLERANCE
+    }
+
+    pub fn point_at(self, u: f64, v: f64) -> Point3d {
+        self.origin.add_vector(Vector3d::new(
+            self.x_axis.x * u + self.y_axis.x * v,
+            self.x_axis.y * u + self.y_axis.y * v,
+            self.x_axis.z * u + self.y_axis.z * v,
+        ))
+    }
+
+    pub fn point_at_3d(self, u: f64, v: f64, w: f64) -> Point3d {
+        self.point_at(u, v).add_vector(Vector3d::new(
+            self.z_axis.x * w,
+            self.z_axis.y * w,
+            self.z_axis.z * w,
+        ))
+    }
+
+    /// Return a rotated copy, matching Python `Plane.Rotate`'s value result.
+    /// Rotation is around this plane's origin, so the origin is preserved.
+    pub fn rotated(self, angle_radians: f64, axis: Vector3d) -> Self {
+        let Some(transform) = Transform::try_rotation_axis_angle(angle_radians, axis, self.origin)
+        else {
+            return self;
+        };
+        Self {
+            origin: self.origin.transformed(transform),
+            x_axis: transform_vector(transform, self.x_axis),
+            y_axis: transform_vector(transform, self.y_axis),
+            z_axis: transform_vector(transform, self.z_axis),
+        }
+    }
+
+    pub fn encode(&self) -> BTreeMap<String, BTreeMap<String, f64>> {
+        BTreeMap::from([
+            ("Origin".to_owned(), self.origin.encode()),
+            ("XAxis".to_owned(), self.x_axis.encode()),
+            ("YAxis".to_owned(), self.y_axis.encode()),
+            ("ZAxis".to_owned(), self.z_axis.encode()),
+        ])
+    }
+}
+
+impl Default for Plane {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A planar circle with explicit coordinate frame and radius.
+///
+/// This covers the value/evaluation portion of Python `rhino3dm.Circle`.
+/// Conversion to a NURBS curve/Brep remains intentionally separate because it
+/// requires the document geometry backend rather than just this analytic
+/// value object.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Circle {
+    pub plane: Plane,
+    pub radius: f64,
+}
+
+impl Circle {
+    pub const fn new(radius: f64) -> Self {
+        Self {
+            plane: Plane::world_xy(),
+            radius,
+        }
+    }
+
+    pub const fn with_center(center: Point3d, radius: f64) -> Self {
+        Self {
+            plane: Plane {
+                origin: center,
+                ..Plane::world_xy()
+            },
+            radius,
+        }
+    }
+
+    pub const fn with_plane(plane: Plane, radius: f64) -> Self {
+        Self { plane, radius }
+    }
+
+    pub const fn center(self) -> Point3d {
+        self.plane.origin
+    }
+
+    pub const fn normal(self) -> Vector3d {
+        self.plane.z_axis
+    }
+
+    pub fn is_valid(self) -> bool {
+        self.plane.is_valid() && self.radius.is_finite() && self.radius > 0.0
+    }
+
+    pub fn diameter(self) -> f64 {
+        self.radius * 2.0
+    }
+
+    pub fn circumference(self) -> f64 {
+        std::f64::consts::TAU * self.radius
+    }
+
+    pub fn point_at(self, parameter: f64) -> Point3d {
+        let (sine, cosine) = parameter.sin_cos();
+        self.plane
+            .point_at(self.radius * cosine, self.radius * sine)
+    }
+
+    pub fn tangent_at(self, parameter: f64) -> Vector3d {
+        let (sine, cosine) = parameter.sin_cos();
+        add_vectors(
+            scale_vector(self.plane.x_axis, -sine),
+            scale_vector(self.plane.y_axis, cosine),
+        )
+    }
+
+    pub fn derivative_at(self, derivative: usize, parameter: f64) -> Vector3d {
+        let (sine, cosine) = parameter.sin_cos();
+        match derivative {
+            0 => Vector3d::new(
+                self.point_at(parameter).x,
+                self.point_at(parameter).y,
+                self.point_at(parameter).z,
+            ),
+            1 => scale_vector(self.tangent_at(parameter), self.radius),
+            2 => scale_vector(
+                add_vectors(
+                    scale_vector(self.plane.x_axis, -cosine),
+                    scale_vector(self.plane.y_axis, -sine),
+                ),
+                self.radius,
+            ),
+            _ => Vector3d::default(),
+        }
+    }
+
+    pub fn bounding_box(self) -> BoundingBox {
+        let radius = self.radius.abs();
+        let x_extent = radius * (self.plane.x_axis.x.powi(2) + self.plane.y_axis.x.powi(2)).sqrt();
+        let y_extent = radius * (self.plane.x_axis.y.powi(2) + self.plane.y_axis.y.powi(2)).sqrt();
+        let z_extent = radius * (self.plane.x_axis.z.powi(2) + self.plane.y_axis.z.powi(2)).sqrt();
+        let center = self.center();
+        BoundingBox::from_coordinates(
+            center.x - x_extent,
+            center.y - y_extent,
+            center.z - z_extent,
+            center.x + x_extent,
+            center.y + y_extent,
+            center.z + z_extent,
+        )
+    }
+
+    pub fn closest_parameter(self, test_point: Point3d) -> (bool, f64) {
+        let delta = Vector3d::new(
+            test_point.x - self.center().x,
+            test_point.y - self.center().y,
+            test_point.z - self.center().z,
+        );
+        let u = delta.dot(self.plane.x_axis);
+        let v = delta.dot(self.plane.y_axis);
+        let parameter = v.atan2(u);
+        (parameter.is_finite(), parameter)
+    }
+
+    pub fn closest_point(self, test_point: Point3d) -> Point3d {
+        let (_, parameter) = self.closest_parameter(test_point);
+        self.point_at(parameter)
+    }
+
+    pub fn is_in_plane(self, plane: Plane, tolerance: f64) -> bool {
+        if !self.is_valid() || !plane.is_valid() {
+            return false;
+        }
+        let offset = Vector3d::new(
+            self.center().x - plane.origin.x,
+            self.center().y - plane.origin.y,
+            self.center().z - plane.origin.z,
+        );
+        offset.dot(plane.z_axis).abs() <= tolerance.abs()
+            && self
+                .normal()
+                .is_parallel_to_with_tolerance(plane.z_axis, tolerance.abs())
+                != 0
+    }
+
+    pub fn reverse(&mut self) {
+        self.plane.y_axis = scale_vector(self.plane.y_axis, -1.0);
+        self.plane.z_axis = scale_vector(self.plane.z_axis, -1.0);
+    }
+
+    pub fn translate(&mut self, delta: Vector3d) -> bool {
+        if !delta.x.is_finite() || !delta.y.is_finite() || !delta.z.is_finite() {
+            return false;
+        }
+        self.plane.origin = self.plane.origin.add_vector(delta);
+        true
+    }
+
+    pub fn transform(&mut self, transform: Transform) -> bool {
+        if !transform.is_valid() || !self.is_valid() {
+            return false;
+        }
+        let x_axis = transform_vector(transform, self.plane.x_axis);
+        let y_axis = transform_vector(transform, self.plane.y_axis);
+        let x_scale = x_axis.length();
+        let y_scale = y_axis.length();
+        if !x_scale.is_finite()
+            || !y_scale.is_finite()
+            || x_scale == 0.0
+            || (x_scale - y_scale).abs() > 1e-12 * x_scale.max(y_scale)
+            || x_axis.dot(y_axis).abs() > 1e-12 * x_scale * y_scale
+        {
+            return false;
+        }
+        let center = self.center().transformed(transform);
+        let rotated = Plane::from_origin_axes(x_axis, y_axis, center);
+        if !rotated.is_valid() {
+            return false;
+        }
+        self.plane = rotated;
+        self.radius *= x_scale;
+        true
+    }
+
+    pub fn encode(&self) -> Value {
+        serde_json::json!({"radius": self.radius, "plane": self.plane.encode()})
+    }
+}
+
+impl Default for Circle {
+    fn default() -> Self {
+        Self::new(0.0)
+    }
+}
+
+fn add_vectors(left: Vector3d, right: Vector3d) -> Vector3d {
+    Vector3d::new(left.x + right.x, left.y + right.y, left.z + right.z)
+}
+
+fn scale_vector(vector: Vector3d, scale: f64) -> Vector3d {
+    Vector3d::new(vector.x * scale, vector.y * scale, vector.z * scale)
+}
+
+fn normalized(vector: Vector3d) -> Option<Vector3d> {
+    let length = vector.length();
+    (length.is_finite() && length > 0.0)
+        .then(|| Vector3d::new(vector.x / length, vector.y / length, vector.z / length))
+}
+
+fn transform_vector(transform: Transform, vector: Vector3d) -> Vector3d {
+    let [x, y, z, _] = transform.apply_homogeneous([vector.x, vector.y, vector.z, 0.0]);
+    Vector3d::new(x, y, z)
+}
+
 impl Interval {
     /// Equivalent to `Interval(t0, t1)`.
     pub const fn new(t0: f64, t1: f64) -> Self {
@@ -2924,6 +3354,15 @@ pub enum Error {
         limit: usize,
         actual: u64,
     },
+    ArchiveLimit {
+        kind: &'static str,
+        limit: usize,
+        actual: usize,
+    },
+    TrailingData {
+        offset: u64,
+        length: usize,
+    },
     InvalidChunkLength {
         offset: u64,
         length: i64,
@@ -2961,6 +3400,17 @@ impl std::fmt::Display for Error {
                 f,
                 "3DM input is {actual} bytes, exceeding the configured {limit}-byte source limit"
             ),
+            Self::ArchiveLimit {
+                kind,
+                limit,
+                actual,
+            } => write!(
+                f,
+                "3DM {kind} count {actual} exceeds the configured {limit}-entry limit"
+            ),
+            Self::TrailingData { offset, length } => {
+                write!(f, "3DM has {length} trailing bytes after EOF at {offset}")
+            }
             Self::InvalidChunkLength { offset, length } => {
                 write!(f, "invalid chunk length {length} at {offset}")
             }
@@ -3530,6 +3980,14 @@ fn read_header(input: &mut impl Read) -> Result<File3dmHeader, Error> {
 }
 
 fn scan_archive(bytes: &[u8], archive_version: u32) -> Result<ArchiveIndex, Error> {
+    scan_archive_with_limits(bytes, archive_version, &ReadLimits::default())
+}
+
+fn scan_archive_with_limits(
+    bytes: &[u8],
+    archive_version: u32,
+    limits: &ReadLimits,
+) -> Result<ArchiveIndex, Error> {
     let mut offset = HEADER_LENGTH;
     let comment = chunk_at(bytes, offset, bytes.len(), archive_version)?;
     if comment.typecode != 1 || comment.short {
@@ -3545,6 +4003,13 @@ fn scan_archive(bytes: &[u8], archive_version: u32) -> Result<ArchiveIndex, Erro
     while offset < bytes.len() {
         let chunk = chunk_at(bytes, offset, bytes.len(), archive_version)?;
         if without_crc(chunk.typecode) == TCODE_END_OF_FILE {
+            let eof_end = end(chunk.source)? as usize;
+            if limits.reject_trailing_data && eof_end != bytes.len() {
+                return Err(Error::TrailingData {
+                    offset: eof_end as u64,
+                    length: bytes.len() - eof_end,
+                });
+            }
             return Ok(ArchiveIndex {
                 tables,
                 objects,
@@ -3559,7 +4024,38 @@ fn scan_archive(bytes: &[u8], archive_version: u32) -> Result<ArchiveIndex, Erro
             });
         }
         let (table, mut table_objects, mut table_definition_records) =
-            scan_table(bytes, chunk, archive_version)?;
+            scan_table(bytes, chunk, archive_version, limits)?;
+        let object_total =
+            objects
+                .len()
+                .checked_add(table_objects.len())
+                .ok_or(Error::ArchiveLimit {
+                    kind: "object",
+                    limit: limits.max_object_records,
+                    actual: usize::MAX,
+                })?;
+        if object_total > limits.max_object_records {
+            return Err(Error::ArchiveLimit {
+                kind: "object",
+                limit: limits.max_object_records,
+                actual: object_total,
+            });
+        }
+        let definition_total = instance_definition_records
+            .len()
+            .checked_add(table_definition_records.len())
+            .ok_or(Error::ArchiveLimit {
+                kind: "instance-definition",
+                limit: limits.max_instance_definition_records,
+                actual: usize::MAX,
+            })?;
+        if definition_total > limits.max_instance_definition_records {
+            return Err(Error::ArchiveLimit {
+                kind: "instance-definition",
+                limit: limits.max_instance_definition_records,
+                actual: definition_total,
+            });
+        }
         offset = end(chunk.source)? as usize;
         tables.push(table);
         objects.append(&mut table_objects);
@@ -3577,6 +4073,7 @@ fn scan_table(
     bytes: &[u8],
     table: Chunk,
     archive_version: u32,
+    limits: &ReadLimits,
 ) -> Result<
     (
         ArchiveTable,
@@ -3607,6 +4104,13 @@ fn scan_table(
                 objects,
                 instance_definition_records,
             ));
+        }
+        if records.len() >= limits.max_table_records {
+            return Err(Error::ArchiveLimit {
+                kind: "table-record",
+                limit: limits.max_table_records,
+                actual: records.len() + 1,
+            });
         }
         if without_crc(table.typecode) == TCODE_OBJECTS && child.typecode == TCODE_OBJECT_RECORD {
             objects.push(parse_object_record(bytes, child, archive_version));
@@ -4756,6 +5260,102 @@ mod tests {
     use super::*;
 
     #[test]
+    fn plane_world_frames_and_point_evaluation_match_python_shape() {
+        assert_eq!(Plane::world_xy().encode()["XAxis"]["X"], 1.0);
+        assert_eq!(Plane::world_yz().x_axis, Vector3d::new(0.0, 1.0, 0.0));
+        assert_eq!(Plane::world_zx().z_axis, Vector3d::new(0.0, 1.0, 0.0));
+        assert!(Plane::world_xy().is_valid());
+        assert!(!Plane::new().is_valid());
+        assert_eq!(
+            Plane::world_xy().point_at(2.0, 3.0),
+            Point3d::new(2.0, 3.0, 0.0)
+        );
+        assert_eq!(
+            Plane::world_xy().point_at_3d(2.0, 3.0, 4.0),
+            Point3d::new(2.0, 3.0, 4.0)
+        );
+    }
+
+    #[test]
+    fn plane_constructors_orthonormalize_axes_and_keep_origin() {
+        let origin = Point3d::new(1.0, 2.0, 3.0);
+        let plane = Plane::from_origin_normal(origin, Vector3d::new(0.0, 0.0, 2.0));
+        assert_eq!(plane.origin, origin);
+        assert_eq!(plane.x_axis, Vector3d::new(1.0, 0.0, 0.0));
+        assert_eq!(plane.y_axis, Vector3d::new(0.0, 1.0, 0.0));
+        assert_eq!(plane.z_axis, Vector3d::new(0.0, 0.0, 1.0));
+        assert!(plane.is_valid());
+
+        let from_points = Plane::from_origin_points(
+            origin,
+            Point3d::new(3.0, 2.0, 3.0),
+            Point3d::new(1.0, 5.0, 3.0),
+        );
+        assert_eq!(from_points, plane);
+        assert!(!Plane::from_origin_normal(origin, Vector3d::default()).is_valid());
+    }
+
+    #[test]
+    fn plane_rotate_returns_rotated_copy_without_mutating_source() {
+        let source =
+            Plane::from_origin_normal(Point3d::new(1.0, 2.0, 3.0), Vector3d::new(0.0, 0.0, 1.0));
+        let rotated = source.rotated(std::f64::consts::FRAC_PI_2, Vector3d::new(0.0, 0.0, 1.0));
+        assert_eq!(source.x_axis, Vector3d::new(1.0, 0.0, 0.0));
+        assert!((rotated.x_axis.x).abs() < 1e-12);
+        assert!((rotated.x_axis.y - 1.0).abs() < 1e-12);
+        assert!((rotated.y_axis.x + 1.0).abs() < 1e-12);
+        assert_eq!(rotated.origin, source.origin);
+        assert!(rotated.is_valid());
+    }
+
+    #[test]
+    fn circle_evaluation_and_bounds_match_world_xy_oracle_contract() {
+        let circle = Circle::with_center(Point3d::new(1.0, 2.0, 3.0), 2.0);
+        assert!(circle.is_valid());
+        assert_eq!(circle.diameter(), 4.0);
+        assert!((circle.circumference() - 2.0 * std::f64::consts::PI * 2.0).abs() < 1e-12);
+        assert_eq!(circle.point_at(0.0), Point3d::new(3.0, 2.0, 3.0));
+        let quarter = circle.point_at(std::f64::consts::FRAC_PI_2);
+        assert!((quarter.x - 1.0).abs() < 1e-12);
+        assert!((quarter.y - 4.0).abs() < 1e-12);
+        assert_eq!(
+            circle.bounding_box(),
+            BoundingBox::from_coordinates(-1.0, 0.0, 3.0, 3.0, 4.0, 3.0)
+        );
+        let (found, parameter) = circle.closest_parameter(Point3d::new(3.0, 2.0, 3.0));
+        assert!(found);
+        assert!(parameter.abs() < 1e-12);
+        assert_eq!(
+            circle.closest_point(Point3d::new(3.0, 2.0, 3.0)),
+            Point3d::new(3.0, 2.0, 3.0)
+        );
+        assert_eq!(circle.tangent_at(0.0), Vector3d::new(0.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn circle_mutation_preserves_or_rejects_transform_contracts() {
+        let mut circle = Circle::new(2.0);
+        assert!(circle.translate(Vector3d::new(1.0, 2.0, 3.0)));
+        assert_eq!(circle.center(), Point3d::new(1.0, 2.0, 3.0));
+        let original = circle;
+        assert!(circle.transform(Transform::translation(2.0, 3.0, 4.0)));
+        assert_eq!(circle.center(), Point3d::new(3.0, 5.0, 7.0));
+        assert_eq!(circle.radius, original.radius);
+        let nonuniform = Transform {
+            matrix: [
+                [2.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        };
+        assert!(!circle.transform(nonuniform));
+        assert_eq!(circle.center(), Point3d::new(3.0, 5.0, 7.0));
+        circle.reverse();
+        assert_eq!(circle.normal(), Vector3d::new(0.0, 0.0, -1.0));
+    }
+
+    #[test]
     fn new_document_assigns_stable_layer_indices_without_touching_archive_state() {
         let mut document = File3dm::new();
         let first = document.add_layer(Layer::new("Base", [1; 16]));
@@ -4960,6 +5560,46 @@ mod tests {
             }) if offset == HEADER_LENGTH as u64 && needed == 12
         ));
     }
+
+    #[test]
+    fn enforces_archive_record_limits_before_admission() {
+        let mut bytes = header();
+        bytes.extend(long_chunk(1, &[]));
+        let mut object_table = long_chunk(TCODE_OBJECT_RECORD, &[1, 2, 3, 0, 0, 0, 0]);
+        object_table.extend(short_chunk(TCODE_END_OF_TABLE, 0));
+        bytes.extend(long_chunk(TCODE_OBJECTS, &object_table));
+        bytes.extend(long_chunk(TCODE_END_OF_FILE, &[0; 8]));
+
+        let limits = ReadLimits::new(bytes.len()).with_record_limits(1, 0, 1);
+        assert!(matches!(
+            File3dm::from_bytes_with_limits(bytes, limits),
+            Err(Error::ArchiveLimit {
+                kind: "object",
+                limit: 0,
+                actual: 1
+            })
+        ));
+    }
+
+    #[test]
+    fn enforces_strict_eof_and_explicit_trailing_data_policy() {
+        let mut bytes = header();
+        bytes.extend(long_chunk(1, &[]));
+        bytes.extend(long_chunk(TCODE_END_OF_FILE, &[0; 8]));
+        bytes.extend([0xaa, 0xbb]);
+
+        assert!(matches!(
+            File3dm::from_bytes(bytes.clone()),
+            Err(Error::TrailingData { offset, length })
+                if offset as usize == bytes.len() - 2 && length == 2
+        ));
+        assert!(File3dm::from_bytes_with_limits(
+            bytes.clone(),
+            ReadLimits::new(bytes.len()).allow_trailing_data()
+        )
+        .is_ok());
+    }
+
     #[test]
     fn reads_header_from_a_bounded_reader() {
         let bytes = header();

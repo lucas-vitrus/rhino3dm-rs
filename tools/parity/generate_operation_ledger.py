@@ -210,6 +210,30 @@ def apply_overrides(operations, overrides):
             raise ValueError(f"passing operation {identifier} needs a backend")
 
 
+def add_source_pointers(operations):
+    """Attach stable inventory/stub pointers without inventing bindings source."""
+    for operation in operations:
+        python_name = operation["python"]
+        if python_name.startswith("rhino3dm."):
+            member = python_name.removeprefix("rhino3dm.")
+            inventory_pointer = f"#/module_exports/{member}"
+        else:
+            class_name, member = python_name.split(".", 1)
+            inventory_pointer = (
+                f"#/classes/{class_name}/declared_members_and_protocols/{member}"
+            )
+        stub = operation.get("stub")
+        operation["source_pointers"] = {
+            "inventory_json": inventory_pointer,
+            "stub": (
+                f"rhino3dm-8.32.1.pyi:{stub['line']}"
+                if stub and "line" in stub
+                else None
+            ),
+            "release_source": "oracle-lock.json#/primary/source_archive",
+        }
+
+
 def build_ledger(inventory, stub_path, oracle_lock, overrides):
     stub_classes, stub_module = parse_stub(stub_path)
     runtime_classes = inventory["classes"]
@@ -267,6 +291,7 @@ def build_ledger(inventory, stub_path, oracle_lock, overrides):
                 "stub": stub_item,
             })
 
+    add_source_pointers(operations)
     apply_overrides(operations, overrides)
     source_kinds = defaultdict(int)
     statuses = defaultdict(int)

@@ -105,9 +105,25 @@ curve, polyline curve, and quadratic NURBS curve was decoded as three typed
 curve carriers. This is still read-only: mutable curve wrappers, evaluation
 parity, and curve writing remain separate obligations.
 
+## P02 analytic value-object slice
+
+The current P02 increment adds typed `Plane` and `Circle` values. `Plane`
+preserves the Python default zero sentinel, WorldXY/WorldYZ/WorldZX frames,
+origin/normal/point/axis constructors, writable public state, two- and
+three-parameter point evaluation, rotation as a returned copy, and nested
+`Encode` shape. `Circle` covers the WorldXY and explicit-plane constructors,
+center/radius/normal queries, validity, diameter/circumference, point and
+tangent evaluation, axis-aligned bounds, closest parameter/point, plane
+membership, reverse/translate, and conformal transform admission. A
+nonuniform transform is rejected because it would not remain a circle.
+
+This is an oracle-shaped analytic slice, not completion of P02: Arc, Box,
+Sphere, Cone, Cylinder, UUID contracts, units/tolerances, and the remaining
+non-finite/intersection edge matrix are still open.
+
 | Check | Result |
 | --- | --- |
-| `cargo test --workspace --all-targets` | PASS: 40 library tests + 3 renderer tests; binary targets had no unit tests |
+| `cargo test --workspace --all-targets` | PASS: 47 library tests + 3 renderer tests; binary targets had no unit tests |
 | `cargo clippy --workspace --all-targets -- -D warnings` | PASS |
 | `cargo fmt --all` and `git diff --check` | PASS |
 | Paired `math-basics-v1` Python/Rust conformance | PASS with `atol=rtol=1e-12`; covers noncommuting composition, inverse fallback, Point3d transform, Vector3d mutation and observed f32 narrowing in `Translation(Vector3d)` |
@@ -116,9 +132,12 @@ parity, and curve writing remain separate obligations.
 | Paired `foundation-2d-and-interval-v1` Python/Rust conformance | PASS with `atol=rtol=1e-12`; covers Point2d construction/distance/addition/mutation/encoding, Vector2d construction/mutation/encoding, and mutable Interval endpoints/equality |
 | Paired `foundation-point3f-v1` Python/Rust conformance | PASS with exact numeric comparison; covers Point3f f32 construction, addition, mutable coordinates, equality, and encoding |
 | Paired `foundation-vector3f-v1` Python/Rust conformance | PASS with exact numeric comparison; covers Vector3f f32 construction, mutable coordinates, equality, and encoding |
+| P02 Plane value-object slice | PASS: world frames, origin/normal/point constructors, validity, point evaluation, nested encoding, and returned-copy rotation |
+| P02 Circle value-object slice | PASS: constructors, evaluation, bounds, closest point/parameter, plane membership, mutation, and conformal/nonuniform transform behavior |
 | Paired `foundation-point4d-v1` Python/Rust conformance | PASS with exact numeric comparison; covers Point4d construction, four mutable coordinates, equality, and encoding |
 | Paired `geometry-line-v1` Python/Rust conformance | PASS with `atol=rtol=1e-12`; covers mutable endpoints, direction/length/tangent/validity, extrapolating `PointAt`, degenerate behavior, and in-place transform |
 | Overload-aware operation ledger generation | PASS: 3,229 obligations, 122 paired-case-backed `passing` mappings, 1,044 unassessed and 2,063 runtime/stub divergences |
+| Operation-ledger source pointers | PASS: all 3,229 obligations carry stable inventory and release-source pointers; stub line pointers are present when the pinned stub exposes a declaration line |
 | `cargo run --quiet --bin rhino3dm-index -- fixtures/structural-benchmark-v1.3dm` | PASS: 2,305 framed objects; 2,049 points; 256 instance references; one definition with one member; no reported framing/geometry parse errors |
 | P03 Rust point writer → Python `rhino3dm` readback | PASS: one point; exact coordinates `(1.25, 2.5, 3.75)`; named-point readback also preserves `NamedPoint` |
 | P03 Python-authored layer/name/UserString fixture → Rust `File3dm` read projection | PASS: one layer, one point, one object name, one UserString; metadata diagnostics remain explicit |

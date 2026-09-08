@@ -65,7 +65,8 @@ overload-aware ledger remains the source of truth: it currently contains
 - [x] Pin the Python distribution/runtime, exported symbols, stubs, and oracle lock.
 - [x] Generate an overload-aware operation ledger and declarative comparison cases.
 - [x] Run foundation cases with numeric comparison and mismatch rejection.
-- [ ] Attach source pointers and executable probes to every ledger obligation.
+- [x] Attach stable inventory, stub, and release-source pointers to every ledger obligation.
+- [x] Run target-free Rust checks and deterministic ledger regeneration in CI.
 - [ ] Add fuzz/property cases and CI closure reporting for the complete ledger.
 
 ### P01 — native `.3dm` archive and object framing
