@@ -150,7 +150,7 @@ fn main() {
             println!("meshes={}", file.meshes().len());
             for (index, mesh) in file.meshes().iter().enumerate() {
                 println!(
-                    "mesh_{index}_vertices={} mesh_{index}_triangles={} mesh_{index}_normals={} mesh_{index}_colors={}",
+                    "mesh_{index}_vertices={} mesh_{index}_triangles={} mesh_{index}_normals={} mesh_{index}_colors={} mesh_{index}_uvs={}",
                     mesh.vertices.len(),
                     mesh.triangles.len(),
                     mesh.normals.len(),
@@ -158,6 +158,12 @@ fn main() {
                         .channels
                         .iter()
                         .find(|channel| channel.kind == 0x5248_0002 && channel.item_size == 4)
+                        .map(|channel| channel.count)
+                        .unwrap_or(0),
+                    mesh
+                        .channels
+                        .iter()
+                        .find(|channel| channel.kind == 0x5248_0001 && channel.item_size == 8)
                         .map(|channel| channel.count)
                         .unwrap_or(0)
                 );

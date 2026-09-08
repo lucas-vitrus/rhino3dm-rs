@@ -66,6 +66,17 @@ add and clear operations; the Python 8.17.0 collection probe confirms the
 three-channel `Add(red, green, blue)` shape and indexed return behavior. A
 Python-authored color fixture recovers three native vertex colors in Rust.
 
+The next five P04 checks extend this bounded slice. UV channels are recovered
+from the bridge's two-float vertex channel and can be stored/cleared on Rust
+meshes. Deterministic undirected topology edges and edge lines are derived
+from valid triangle/quad faces. A bounded `PointCloud` core supports point
+addition, count, indexed query, and clear, but its optional normal/color/
+hidden/value item channels are not yet integrated. `Mesh::write` now emits a
+standalone native mesh with normals, UVs, and colors; a Rust-written quad is
+read by Python as two triangles, four vertices, four colors, and four normals.
+The Python 8.17.0 `Hide`/`Show` mesh-vertex probe produced no observable state
+change, so hidden-state parity remains an explicit unresolved runtime finding.
+
 ## P05 curve read projection seed
 
 `File3dm::curves()` now exposes the bridge's typed curve carriers without
@@ -96,6 +107,10 @@ parity, and curve writing remain separate obligations.
 | P04 vertex clear against Python 8.17.0 | PASS: vertices clear while face records remain; valid face counts become zero |
 | P04 mesh normals against Python 8.17.0 and native fixture | PASS: `ComputeNormals`, `Flip`, `UnitizeNormals`, `Clear`, and five native normals observed |
 | P04 mesh vertex colors against Python 8.17.0 and native fixture | PASS: indexed color addition/clear and three native four-byte color entries recovered |
+| P04 UV channel and topology slice | PASS: four native UV entries recovered; deterministic valid-face edge derivation and edge-line query tested |
+| P04 PointCloud core slice | PASS: point add/count/index/clear tested; optional item channels remain incomplete |
+| P04 source-less mesh writer → Python 8.17.0 readback | PASS: one Rust mesh read by Python as four vertices, two triangles, four colors, and four normals; quad arity is intentionally triangulated |
+| P04 hidden vertex probe | INCOMPLETE finding: Python 8.17.0 `Hide`/`Show` calls produced no observable hidden-state change in the tested mesh |
 | P05 Python-authored line/polyline/NURBS fixture → Rust `File3dm::curves()` projection | PASS: three typed curve carriers; no sampled-point flattening |
 | Primary Python runtime inspection | Distribution 8.32.1, runtime 8.32.2; 212 exported classes including 49 enums |
 | Clay Python runtime inspection | Distribution/runtime 8.17.0; 193 exported classes including 46 enums |

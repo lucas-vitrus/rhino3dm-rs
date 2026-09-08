@@ -9,13 +9,13 @@ use cadmpeg_ir::codec::{EncodeInput, Encoder};
 use cadmpeg_ir::document::CadIr;
 use cadmpeg_ir::geometry::Curve;
 use cadmpeg_ir::ids::{BodyId, PointId, RegionId, ShellId, VertexId};
-use cadmpeg_ir::math::Point3 as IrPoint3;
-use cadmpeg_ir::tessellation::Tessellation;
+use cadmpeg_ir::math::{Point3 as IrPoint3, Vector3 as IrVector3};
+use cadmpeg_ir::tessellation::{Tessellation, TessellationChannel};
 use cadmpeg_ir::topology::{Body as IrBody, BodyKind, Point as IrPoint, Region, Shell, Vertex};
 use cadmpeg_ir::units::Units;
 use cadmpeg_ir::{Codec, DecodeOptions};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Cursor, Read};
 use std::path::Path;
@@ -463,6 +463,26 @@ impl File3dm {
                         })
                     })
                     .unwrap_or_default(),
+                texture_coordinates: mesh
+                    .channels
+                    .iter()
+                    .find(|channel| channel.kind == 0x5248_0001 && channel.item_size == 8)
+                    .and_then(|channel| {
+                        let expected = usize::try_from(channel.count).ok()?.checked_mul(8)?;
+                        (channel.data.len() == expected).then(|| {
+                            channel
+                                .data
+                                .chunks_exact(8)
+                                .map(|chunk| {
+                                    [
+                                        f32::from_le_bytes(chunk[0..4].try_into().unwrap()),
+                                        f32::from_le_bytes(chunk[4..8].try_into().unwrap()),
+                                    ]
+                                })
+                                .collect()
+                        })
+                    })
+                    .unwrap_or_default(),
             })
             .collect();
         let curves = match RhinoCodec.decode(
@@ -769,6 +789,7 @@ pub struct Mesh {
     pub faces: Vec<MeshFace>,
     pub normals: Vec<Vector3f>,
     pub vertex_colors: Vec<[u8; 4]>,
+    pub texture_coordinates: Vec<[f32; 2]>,
 }
 
 impl Mesh {
@@ -779,6 +800,7 @@ impl Mesh {
             faces: Vec::new(),
             normals: Vec::new(),
             vertex_colors: Vec::new(),
+            texture_coordinates: Vec::new(),
         }
     }
 
@@ -860,6 +882,23 @@ impl Mesh {
     /// Remove all stored vertex colors.
     pub fn clear_colors(&mut self) {
         self.vertex_colors.clear();
+    }
+
+    /// Number of stored vertex texture coordinates.
+    pub fn texture_coordinate_count(&self) -> usize {
+        self.texture_coordinates.len()
+    }
+
+    /// Add one single-precision `(u, v)` texture coordinate.
+    pub fn add_texture_coordinate(&mut self, coordinate: [f32; 2]) -> usize {
+        let index = self.texture_coordinates.len();
+        self.texture_coordinates.push(coordinate);
+        index
+    }
+
+    /// Remove all stored texture coordinates.
+    pub fn clear_texture_coordinates(&mut self) {
+        self.texture_coordinates.clear();
     }
 
     /// Negate all stored normals, matching `Mesh.Normals.Flip()`.
@@ -1032,16 +1071,198 @@ impl Mesh {
         self.faces.get(index).copied()
     }
 
+    /// Return unique undirected topology edges in deterministic order.
+    pub fn topology_edges(&self) -> Vec<[usize; 2]> {
+        let mut edges = BTreeSet::new();
+        for face in &self.faces {
+            let indices: Vec<usize> = match face {
+                MeshFace::Triangle(indices) => indices
+                    .iter()
+                    .map(|&index| usize::try_from(index))
+                    .collect::<Result<_, _>>()
+                    .ok()
+                    .filter(|indices: &Vec<usize>| {
+                        indices.iter().all(|&index| index < self.vertices.len())
+                    })
+                    .unwrap_or_default(),
+                MeshFace::Quad(indices) => indices
+                    .iter()
+                    .map(|&index| usize::try_from(index))
+                    .collect::<Result<_, _>>()
+                    .ok()
+                    .filter(|indices: &Vec<usize>| {
+                        indices.iter().all(|&index| index < self.vertices.len())
+                    })
+                    .unwrap_or_default(),
+            };
+            for pair in indices
+                .iter()
+                .copied()
+                .zip(indices.iter().copied().cycle().skip(1))
+                .take(indices.len())
+            {
+                edges.insert(if pair.0 <= pair.1 {
+                    [pair.0, pair.1]
+                } else {
+                    [pair.1, pair.0]
+                });
+            }
+        }
+        edges.into_iter().collect()
+    }
+
+    /// Return the line represented by one derived topology edge.
+    pub fn topology_edge_line(&self, index: usize) -> Option<Line> {
+        let [start, end] = *self.topology_edges().get(index)?;
+        Some(Line::new(self.vertices[start], self.vertices[end]))
+    }
+
     fn face_is_valid<const N: usize>(&self, indices: &[i32; N]) -> bool {
         indices
             .iter()
             .all(|&index| usize::try_from(index).is_ok_and(|index| index < self.vertices.len()))
+    }
+
+    /// Write a standalone native mesh object through the Rust Rhino encoder.
+    /// Native quad faces are represented as two triangles by the current
+    /// bridge writer; invalid faces and mismatched auxiliary channel lengths
+    /// are rejected before any destination bytes are replaced.
+    pub fn write(&self, path: impl AsRef<Path>) -> Result<(), Error> {
+        if self.vertices.is_empty() {
+            return Err(Error::Unsupported {
+                capability: "writing an empty mesh",
+            });
+        }
+        let mut triangles = Vec::new();
+        for face in &self.faces {
+            match face {
+                MeshFace::Triangle(indices) if self.face_is_valid(indices) => {
+                    triangles.push(indices.map(|index| index as u32));
+                }
+                MeshFace::Quad(indices) if self.face_is_valid(indices) => {
+                    triangles.push([indices[0] as u32, indices[1] as u32, indices[2] as u32]);
+                    triangles.push([indices[0] as u32, indices[2] as u32, indices[3] as u32]);
+                }
+                _ => {
+                    return Err(Error::Unsupported {
+                        capability: "writing a mesh with invalid faces",
+                    });
+                }
+            }
+        }
+        if (!self.normals.is_empty() && self.normals.len() != self.vertices.len())
+            || (!self.vertex_colors.is_empty() && self.vertex_colors.len() != self.vertices.len())
+            || (!self.texture_coordinates.is_empty()
+                && self.texture_coordinates.len() != self.vertices.len())
+        {
+            return Err(Error::Unsupported {
+                capability: "writing a mesh with incomplete vertex channels",
+            });
+        }
+        let mut channels = Vec::new();
+        if !self.texture_coordinates.is_empty() {
+            let mut data = Vec::with_capacity(self.texture_coordinates.len() * 8);
+            for [u, v] in &self.texture_coordinates {
+                data.extend_from_slice(&u.to_le_bytes());
+                data.extend_from_slice(&v.to_le_bytes());
+            }
+            channels.push(TessellationChannel {
+                domain: Default::default(),
+                item_size: 8,
+                kind: 0x5248_0001,
+                flags: 0,
+                count: self.texture_coordinates.len() as u32,
+                data,
+                indices: Vec::new(),
+            });
+        }
+        if !self.vertex_colors.is_empty() {
+            let data = self
+                .vertex_colors
+                .iter()
+                .flat_map(|color| color.iter().copied())
+                .collect();
+            channels.push(TessellationChannel {
+                domain: Default::default(),
+                item_size: 4,
+                kind: 0x5248_0002,
+                flags: 0,
+                count: self.vertex_colors.len() as u32,
+                data,
+                indices: Vec::new(),
+            });
+        }
+        let mut ir = CadIr::empty(Units::default());
+        ir.model.tessellations.push(Tessellation {
+            id: "rhino3dm-rs:mesh:0".to_owned(),
+            body: None,
+            faces: Vec::new(),
+            chordal_deflection: None,
+            source_object: None,
+            vertices: self
+                .vertices
+                .iter()
+                .map(|point| IrPoint3::new(point.x, point.y, point.z))
+                .collect(),
+            triangles,
+            feature_edges: Vec::new(),
+            strip_lengths: Vec::new(),
+            normals: self
+                .normals
+                .iter()
+                .map(|normal| IrVector3::new(normal.x as f64, normal.y as f64, normal.z as f64))
+                .collect(),
+            corner_normals: Vec::new(),
+            triangle_groups: Vec::new(),
+            texture_assignments: Vec::new(),
+            channels,
+        });
+        let plan = RhinoEncoder::new(RhinoArchiveVersion::V8)
+            .plan(EncodeInput {
+                ir: &ir,
+                fidelity: None,
+            })
+            .map_err(|error| Error::Decode(error.to_string()))?;
+        let mut bytes = Vec::new();
+        plan.write_to(&mut bytes)
+            .map_err(|error| Error::Decode(error.to_string()))?;
+        std::fs::write(path, bytes)?;
+        Ok(())
     }
 }
 
 impl Default for Mesh {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// A bounded point-cloud model corresponding to Python's `PointCloud` core
+/// collection. Optional per-item channels are added in later slices.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PointCloud {
+    pub points: Vec<Point3d>,
+}
+
+impl PointCloud {
+    pub const fn new() -> Self {
+        Self { points: Vec::new() }
+    }
+
+    pub fn count(&self) -> usize {
+        self.points.len()
+    }
+
+    pub fn add(&mut self, point: Point3d) {
+        self.points.push(point);
+    }
+
+    pub fn point_at(&self, index: usize) -> Option<Point3d> {
+        self.points.get(index).copied()
+    }
+
+    pub fn clear(&mut self) {
+        self.points.clear();
     }
 }
 
@@ -3846,4 +4067,71 @@ fn mesh_vertex_colors_have_indexed_add_and_clear_semantics() {
     assert_eq!(mesh.vertex_colors, vec![[1, 2, 3, 255], [4, 5, 6, 7]]);
     mesh.clear_colors();
     assert_eq!(mesh.color_count(), 0);
+}
+
+#[test]
+fn mesh_uvs_and_topology_edges_are_indexed_and_deterministic() {
+    let mut mesh = Mesh::new();
+    for point in [
+        Point3d::new(0.0, 0.0, 0.0),
+        Point3d::new(1.0, 0.0, 0.0),
+        Point3d::new(1.0, 1.0, 0.0),
+        Point3d::new(0.0, 1.0, 0.0),
+    ] {
+        mesh.add_vertex(point);
+    }
+    assert_eq!(mesh.add_quad([0, 1, 2, 3]), 0);
+    assert_eq!(mesh.add_texture_coordinate([0.0, 0.0]), 0);
+    assert_eq!(mesh.add_texture_coordinate([1.0, 0.0]), 1);
+    assert_eq!(mesh.texture_coordinate_count(), 2);
+    assert_eq!(mesh.topology_edges(), vec![[0, 1], [0, 3], [1, 2], [2, 3]]);
+    assert_eq!(
+        mesh.topology_edge_line(0),
+        Some(Line::new(mesh.vertices[0], mesh.vertices[1]))
+    );
+    mesh.clear_texture_coordinates();
+    assert_eq!(mesh.texture_coordinate_count(), 0);
+}
+
+#[test]
+fn point_cloud_core_has_python_style_add_count_query_and_clear() {
+    let mut cloud = PointCloud::new();
+    cloud.add(Point3d::new(1.0, 2.0, 3.0));
+    cloud.add(Point3d::new(4.0, 5.0, 6.0));
+    assert_eq!(cloud.count(), 2);
+    assert_eq!(cloud.point_at(1), Some(Point3d::new(4.0, 5.0, 6.0)));
+    assert_eq!(cloud.point_at(2), None);
+    cloud.clear();
+    assert_eq!(cloud.count(), 0);
+}
+
+#[test]
+fn source_less_mesh_writes_and_reads_through_native_rust_codec() {
+    let path = std::env::temp_dir().join(format!(
+        "rhino3dm-rs-mesh-writer-{}.3dm",
+        std::process::id()
+    ));
+    let mut mesh = Mesh::new();
+    mesh.add_vertex(Point3d::new(0.0, 0.0, 0.0));
+    mesh.add_vertex(Point3d::new(1.0, 0.0, 0.0));
+    mesh.add_vertex(Point3d::new(0.0, 1.0, 0.0));
+    mesh.add_triangle([0, 1, 2]);
+    mesh.add_normal(Vector3f::new(0.0, 0.0, 1.0));
+    mesh.add_normal(Vector3f::new(0.0, 0.0, 1.0));
+    mesh.add_normal(Vector3f::new(0.0, 0.0, 1.0));
+    mesh.add_color([255, 0, 0, 255]);
+    mesh.add_color([0, 255, 0, 255]);
+    mesh.add_color([0, 0, 255, 255]);
+    mesh.add_texture_coordinate([0.0, 0.0]);
+    mesh.add_texture_coordinate([1.0, 0.0]);
+    mesh.add_texture_coordinate([0.0, 1.0]);
+    mesh.write(&path).unwrap();
+    let document = File3dm::read(&path).unwrap();
+    assert_eq!(document.mesh_views().len(), 1);
+    assert_eq!(document.mesh_views()[0].vertices.len(), 3);
+    assert_eq!(document.mesh_views()[0].faces.len(), 1);
+    assert_eq!(document.mesh_views()[0].normals.len(), 3);
+    assert_eq!(document.mesh_views()[0].vertex_colors.len(), 3);
+    assert_eq!(document.mesh_views()[0].texture_coordinates.len(), 3);
+    std::fs::remove_file(path).unwrap();
 }
