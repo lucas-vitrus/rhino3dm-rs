@@ -130,6 +130,14 @@ latitude/longitude circle construction. `Arc` covers angle-domain evaluation,
 endpoints/midpoint, bounds, closest queries, trimming, reversal, and
 conformal-transform admission.
 
+The `Transform` slice now also has native constructors for both `Scale`
+overloads and both `Mirror` overloads. Direct 8.17.0 regression-oracle matrix
+observations cover anchored uniform scale, plane-basis scale, point/normal
+reflection, plane reflection, and the zero-normal identity fallback. These
+four primary-8.32.1 ledger obligations remain `not_assessed` until a pinned
+8.32.1 differential case is added; this regression evidence does not upgrade
+them to target-version parity.
+
 This is an oracle-shaped analytic slice, not completion of P02: Cone,
 units/tolerances, and the remaining
 non-finite/intersection edge matrix are still open.
@@ -142,7 +150,7 @@ class-codec constants remain wire values for direct source comparison.
 
 | Check | Result |
 | --- | --- |
-| `cargo test --workspace --all-targets` | PASS: 56 library tests + 3 renderer tests; binary targets had no unit tests |
+| `cargo test --workspace --all-targets` | PASS: 57 library tests + 3 renderer tests; binary targets had no unit tests |
 | `cargo clippy --workspace --all-targets -- -D warnings` | PASS |
 | `cargo fmt --all` and `git diff --check` | PASS |
 | Paired `math-basics-v1` Python/Rust conformance | PASS with `atol=rtol=1e-12`; covers noncommuting composition, inverse fallback, Point3d transform, Vector3d mutation and observed f32 narrowing in `Translation(Vector3d)` |
@@ -157,6 +165,7 @@ class-codec constants remain wire values for direct source comparison.
 | P02 Arc value-object slice | PASS: angle-domain evaluation, bounds, closest queries, trimming, reversal, and conformal/nonuniform transform behavior |
 | P02 Box value-object slice | PASS: normalized point evaluation, validity, area/volume/center, closest point, and transform behavior |
 | P02 Cylinder value-object slice | PASS: constructible circle/height surface, signed height endpoints, axis, center, finite/validity, and `CircleAt` behavior |
+| P02 `Transform.Scale`/`Transform.Mirror` seed | PASS against the 8.17.0 regression oracle: both scale overloads, both mirror overloads, and zero-normal fallback have direct matrix observations; primary 8.32.1 differential coverage is still required |
 | P02/P03 canonical UUID contract | PASS: canonical string parsing/formatting, nil handling, OpenNURBS wire round trip, and canonical object-attribute ID exposure |
 | Paired `foundation-point4d-v1` Python/Rust conformance | PASS with exact numeric comparison; covers Point4d construction, four mutable coordinates, equality, and encoding |
 | Paired `geometry-line-v1` Python/Rust conformance | PASS with `atol=rtol=1e-12`; covers mutable endpoints, direction/length/tangent/validity, extrapolating `PointAt`, degenerate behavior, and in-place transform |

@@ -2313,6 +2313,111 @@ impl Transform {
         )
     }
 
+    /// Build the uniform scale transform returned by Python's
+    /// `Transform.Scale(anchor, scaleFactor)` overload.
+    pub fn scale(anchor: Point3d, scale_factor: f64) -> Self {
+        Self {
+            matrix: [
+                [scale_factor, 0.0, 0.0, anchor.x * (1.0 - scale_factor)],
+                [0.0, scale_factor, 0.0, anchor.y * (1.0 - scale_factor)],
+                [0.0, 0.0, scale_factor, anchor.z * (1.0 - scale_factor)],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        }
+    }
+
+    /// Build the non-uniform scale transform returned by Python's
+    /// `Transform.Scale(plane, xScaleFactor, yScaleFactor, zScaleFactor)`
+    /// overload.
+    ///
+    /// The plane axes define the scale basis and its origin remains fixed.
+    /// Callers providing an invalid plane retain that invalid state in the
+    /// resulting transform rather than having an arbitrary world basis
+    /// silently substituted.
+    pub fn scale_in_plane(
+        plane: Plane,
+        x_scale_factor: f64,
+        y_scale_factor: f64,
+        z_scale_factor: f64,
+    ) -> Self {
+        let axes = [plane.x_axis, plane.y_axis, plane.z_axis];
+        let factors = [x_scale_factor, y_scale_factor, z_scale_factor];
+        let linear: [[f64; 3]; 3] = std::array::from_fn(|row| {
+            std::array::from_fn(|column| {
+                (0..3)
+                    .map(|axis| {
+                        let vector = axes[axis];
+                        let component = [vector.x, vector.y, vector.z];
+                        factors[axis] * component[row] * component[column]
+                    })
+                    .sum()
+            })
+        });
+        let origin = [plane.origin.x, plane.origin.y, plane.origin.z];
+        let offset: [f64; 3] = std::array::from_fn(|row| {
+            origin[row]
+                - linear[row][0] * origin[0]
+                - linear[row][1] * origin[1]
+                - linear[row][2] * origin[2]
+        });
+        Self {
+            matrix: [
+                [linear[0][0], linear[0][1], linear[0][2], offset[0]],
+                [linear[1][0], linear[1][1], linear[1][2], offset[1]],
+                [linear[2][0], linear[2][1], linear[2][2], offset[2]],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        }
+    }
+
+    /// Build the reflection returned by Python's
+    /// `Transform.Mirror(pointOnMirrorPlane, normalToMirrorPlane)` overload.
+    ///
+    /// A zero or non-finite normal produces the Python-observed identity
+    /// fallback instead of an invalid divide-by-zero matrix.
+    pub fn mirror(point_on_mirror_plane: Point3d, normal_to_mirror_plane: Vector3d) -> Self {
+        let normal_squared = normal_to_mirror_plane.dot(normal_to_mirror_plane);
+        if !normal_squared.is_finite() || normal_squared <= 0.0 {
+            return Self::IDENTITY;
+        }
+        let normal = [
+            normal_to_mirror_plane.x,
+            normal_to_mirror_plane.y,
+            normal_to_mirror_plane.z,
+        ];
+        let linear: [[f64; 3]; 3] = std::array::from_fn(|row| {
+            std::array::from_fn(|column| {
+                let identity = if row == column { 1.0 } else { 0.0 };
+                identity - 2.0 * normal[row] * normal[column] / normal_squared
+            })
+        });
+        let point = [
+            point_on_mirror_plane.x,
+            point_on_mirror_plane.y,
+            point_on_mirror_plane.z,
+        ];
+        let offset: [f64; 3] = std::array::from_fn(|row| {
+            point[row]
+                - linear[row][0] * point[0]
+                - linear[row][1] * point[1]
+                - linear[row][2] * point[2]
+        });
+        Self {
+            matrix: [
+                [linear[0][0], linear[0][1], linear[0][2], offset[0]],
+                [linear[1][0], linear[1][1], linear[1][2], offset[1]],
+                [linear[2][0], linear[2][1], linear[2][2], offset[2]],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        }
+    }
+
+    /// Build the reflection returned by Python's `Transform.Mirror(plane)`
+    /// overload.
+    pub fn mirror_plane(plane: Plane) -> Self {
+        Self::mirror(plane.origin, plane.z_axis)
+    }
+
     /// Standard row-major matrix product, matching `Transform.Multiply(a, b)`.
     pub fn multiply(self, right: Self) -> Self {
         let mut matrix = [[0.0; 4]; 4];
@@ -6299,6 +6404,71 @@ mod tests {
         assert_eq!((negative.height1, negative.height2), (0.0, -3.0));
         assert_eq!(negative.total_height(), 3.0);
         assert_eq!(negative.center(), Point3d::new(0.0, 0.0, -1.5));
+    }
+
+    #[test]
+    fn transform_scale_and_mirror_match_python_8_17_oracle_contract() {
+        let anchor = Point3d::new(2.0, 3.0, 5.0);
+        assert_eq!(
+            Transform::scale(anchor, 2.0),
+            Transform {
+                matrix: [
+                    [2.0, 0.0, 0.0, -2.0],
+                    [0.0, 2.0, 0.0, -3.0],
+                    [0.0, 0.0, 2.0, -5.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+            }
+        );
+        assert_eq!(
+            Transform::scale_in_plane(Plane::world_yz(), 2.0, 3.0, 4.0),
+            Transform {
+                matrix: [
+                    [4.0, 0.0, 0.0, 0.0],
+                    [0.0, 2.0, 0.0, 0.0],
+                    [0.0, 0.0, 3.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+            }
+        );
+        let shifted_xy = Plane::from_origin_normal(anchor, Vector3d::new(0.0, 0.0, 1.0));
+        assert_eq!(
+            Transform::scale_in_plane(shifted_xy, 2.0, 3.0, 4.0),
+            Transform {
+                matrix: [
+                    [2.0, 0.0, 0.0, -2.0],
+                    [0.0, 3.0, 0.0, -6.0],
+                    [0.0, 0.0, 4.0, -15.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+            }
+        );
+        assert_eq!(
+            Transform::mirror(anchor, Vector3d::new(0.0, 0.0, 2.0)),
+            Transform {
+                matrix: [
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, -1.0, 10.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+            }
+        );
+        assert_eq!(
+            Transform::mirror_plane(Plane::world_yz()),
+            Transform {
+                matrix: [
+                    [-1.0, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+            }
+        );
+        assert_eq!(
+            Transform::mirror(anchor, Vector3d::default()),
+            Transform::IDENTITY
+        );
     }
 
     #[test]

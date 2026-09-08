@@ -68796,8 +68796,9 @@
     },
     {
       "acceptance_case_ids": [],
-      "backend": "missing",
+      "backend": "native",
       "id": "py-8-32-1.transform.mirror.overload-1",
+      "notes": "Implemented and covered by direct 8.17.0 matrix observations, including the zero-normal identity fallback. A pinned 8.32.1 differential case remains required before this obligation can pass.",
       "python": "Transform.Mirror",
       "runtime": {
         "doc": "Mirror(*args, **kwargs)\nOverloaded function.\n\n1. Mirror(pointOnMirrorPlane: rhino3dm._rhino3dm.Point3d, normalToMirrorPlane: rhino3dm._rhino3dm.Vector3d) -> rhino3dm._rhino3dm.Transform\n\n2. Mirror(mirrorPlane: rhino3dm._rhino3dm.Plane) -> rhino3dm._rhino3dm.Transform\n",
@@ -68805,7 +68806,7 @@
         "overload_index": 1,
         "overload_signature": "Mirror(pointOnMirrorPlane: rhino3dm._rhino3dm.Point3d, normalToMirrorPlane: rhino3dm._rhino3dm.Vector3d) -> rhino3dm._rhino3dm.Transform"
       },
-      "rust_mapping": null,
+      "rust_mapping": "Transform::mirror",
       "source_kind": "both",
       "source_pointers": {
         "inventory_json": "#/classes/Transform/declared_members_and_protocols/Mirror",
@@ -68826,8 +68827,9 @@
     },
     {
       "acceptance_case_ids": [],
-      "backend": "missing",
+      "backend": "native",
       "id": "py-8-32-1.transform.mirror.overload-2",
+      "notes": "Implemented and covered by a direct 8.17.0 WorldYZ matrix observation. A pinned 8.32.1 differential case remains required before this obligation can pass.",
       "python": "Transform.Mirror",
       "runtime": {
         "doc": "Mirror(*args, **kwargs)\nOverloaded function.\n\n1. Mirror(pointOnMirrorPlane: rhino3dm._rhino3dm.Point3d, normalToMirrorPlane: rhino3dm._rhino3dm.Vector3d) -> rhino3dm._rhino3dm.Transform\n\n2. Mirror(mirrorPlane: rhino3dm._rhino3dm.Plane) -> rhino3dm._rhino3dm.Transform\n",
@@ -68835,7 +68837,7 @@
         "overload_index": 2,
         "overload_signature": "Mirror(mirrorPlane: rhino3dm._rhino3dm.Plane) -> rhino3dm._rhino3dm.Transform"
       },
-      "rust_mapping": null,
+      "rust_mapping": "Transform::mirror_plane",
       "source_kind": "both",
       "source_pointers": {
         "inventory_json": "#/classes/Transform/declared_members_and_protocols/Mirror",
@@ -68974,8 +68976,9 @@
     },
     {
       "acceptance_case_ids": [],
-      "backend": "missing",
+      "backend": "native",
       "id": "py-8-32-1.transform.scale.overload-1",
+      "notes": "Implemented and covered by a direct 8.17.0 anchor-scale matrix observation. A pinned 8.32.1 differential case remains required before this obligation can pass.",
       "python": "Transform.Scale",
       "runtime": {
         "doc": "Scale(*args, **kwargs)\nOverloaded function.\n\n1. Scale(anchor: rhino3dm._rhino3dm.Point3d, scaleFactor: typing.SupportsFloat | typing.SupportsIndex) -> rhino3dm._rhino3dm.Transform\n\n2. Scale(plane: rhino3dm._rhino3dm.Plane, xScaleFactor: typing.SupportsFloat | typing.SupportsIndex, yScaleFactor: typing.SupportsFloat | typing.SupportsIndex, zScaleFactor: typing.SupportsFloat | typing.SupportsIndex) -> rhino3dm._rhino3dm.Transform\n",
@@ -68983,7 +68986,7 @@
         "overload_index": 1,
         "overload_signature": "Scale(anchor: rhino3dm._rhino3dm.Point3d, scaleFactor: typing.SupportsFloat | typing.SupportsIndex) -> rhino3dm._rhino3dm.Transform"
       },
-      "rust_mapping": null,
+      "rust_mapping": "Transform::scale",
       "source_kind": "both",
       "source_pointers": {
         "inventory_json": "#/classes/Transform/declared_members_and_protocols/Scale",
@@ -69004,8 +69007,9 @@
     },
     {
       "acceptance_case_ids": [],
-      "backend": "missing",
+      "backend": "native",
       "id": "py-8-32-1.transform.scale.overload-2",
+      "notes": "Implemented and covered by direct 8.17.0 WorldYZ and translated-WorldXY matrix observations. A pinned 8.32.1 differential case remains required before this obligation can pass.",
       "python": "Transform.Scale",
       "runtime": {
         "doc": "Scale(*args, **kwargs)\nOverloaded function.\n\n1. Scale(anchor: rhino3dm._rhino3dm.Point3d, scaleFactor: typing.SupportsFloat | typing.SupportsIndex) -> rhino3dm._rhino3dm.Transform\n\n2. Scale(plane: rhino3dm._rhino3dm.Plane, xScaleFactor: typing.SupportsFloat | typing.SupportsIndex, yScaleFactor: typing.SupportsFloat | typing.SupportsIndex, zScaleFactor: typing.SupportsFloat | typing.SupportsIndex) -> rhino3dm._rhino3dm.Transform\n",
@@ -69013,7 +69017,7 @@
         "overload_index": 2,
         "overload_signature": "Scale(plane: rhino3dm._rhino3dm.Plane, xScaleFactor: typing.SupportsFloat | typing.SupportsIndex, yScaleFactor: typing.SupportsFloat | typing.SupportsIndex, zScaleFactor: typing.SupportsFloat | typing.SupportsIndex) -> rhino3dm._rhino3dm.Transform"
       },
-      "rust_mapping": null,
+      "rust_mapping": "Transform::scale_in_plane",
       "source_kind": "both",
       "source_pointers": {
         "inventory_json": "#/classes/Transform/declared_members_and_protocols/Scale",

@@ -197,12 +197,40 @@
       "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
       "notes": "Covers the affine zero transform and nonzero/non-affine transforms."
     },
+    "py-8-32-1.transform.mirror.overload-1": {
+      "status": "not_assessed",
+      "backend": "native",
+      "rust_mapping": "Transform::mirror",
+      "acceptance_case_ids": [],
+      "notes": "Implemented and covered by direct 8.17.0 matrix observations, including the zero-normal identity fallback. A pinned 8.32.1 differential case remains required before this obligation can pass."
+    },
+    "py-8-32-1.transform.mirror.overload-2": {
+      "status": "not_assessed",
+      "backend": "native",
+      "rust_mapping": "Transform::mirror_plane",
+      "acceptance_case_ids": [],
+      "notes": "Implemented and covered by a direct 8.17.0 WorldYZ matrix observation. A pinned 8.32.1 differential case remains required before this obligation can pass."
+    },
     "py-8-32-1.transform.rotation.overload-1": {
       "status": "passing",
       "backend": "native",
       "rust_mapping": "Transform::try_rotation_axis_angle",
       "acceptance_case_ids": ["math.operations-and-boundaries.v1"],
       "notes": "Axis-angle rotation around a point is checked by matrix, predicates and point transformation. Direction-to-direction rotation remains incomplete."
+    },
+    "py-8-32-1.transform.scale.overload-1": {
+      "status": "not_assessed",
+      "backend": "native",
+      "rust_mapping": "Transform::scale",
+      "acceptance_case_ids": [],
+      "notes": "Implemented and covered by a direct 8.17.0 anchor-scale matrix observation. A pinned 8.32.1 differential case remains required before this obligation can pass."
+    },
+    "py-8-32-1.transform.scale.overload-2": {
+      "status": "not_assessed",
+      "backend": "native",
+      "rust_mapping": "Transform::scale_in_plane",
+      "acceptance_case_ids": [],
+      "notes": "Implemented and covered by direct 8.17.0 WorldYZ and translated-WorldXY matrix observations. A pinned 8.32.1 differential case remains required before this obligation can pass."
     },
     "py-8-32-1.transform.transpose.method": {
       "status": "passing",
