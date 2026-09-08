@@ -76,9 +76,16 @@ standalone native mesh with normals, UVs, and colors. Its Rust-authored quad
 path writes Rhino's native four-index face form and recomputes the exact
 class-data checksum scope; Python 8.17.0 reads it as one quad (zero triangles),
 with four vertices, four colors, and four normals. This writer is deliberately
-limited to source-less Rust meshes: imported mesh projections still expose the
-bridge's triangle view and cannot yet be written back without losing native
-source topology.
+limited to source-less Rust meshes. Imported mesh views now recover the native
+four-index face array from their retained `ON_Mesh` class-data span before the
+bridge's display triangulation is exposed: a Python 8.17.0-authored mixed
+fixture reports two faces in Rust (one triangle and one quad), while its
+bridge tessellation remains the expected three display triangles. The native
+face overlay is applied only when source mesh count, vertex count, and derived
+display-triangle count agree with the bridge; a mismatch is retained as an
+explicit metadata diagnostic rather than silently pairing unrelated meshes.
+Ngon membership, mesh cache fields, and general imported-mesh rewriting remain
+outside this slice.
 The Python 8.17.0 `Hide`/`Show` mesh-vertex probe produced no observable state
 change, so hidden-state parity remains an explicit unresolved runtime finding.
 

@@ -169,6 +169,15 @@ fn main() {
                 );
             }
             println!("mesh_views={}", file.mesh_views().len());
+            for (index, mesh) in file.mesh_views().iter().enumerate() {
+                println!(
+                    "mesh_view_{index}_vertices={} mesh_view_{index}_faces={} mesh_view_{index}_triangles={} mesh_view_{index}_quads={}",
+                    mesh.vertex_count(),
+                    mesh.face_count(),
+                    mesh.triangle_count(),
+                    mesh.quad_count(),
+                );
+            }
             println!("curves={}", file.curves().len());
             println!(
                 "instance_references_decoded={}",

@@ -426,7 +426,7 @@ impl File3dm {
                 Vec::new()
             }
         };
-        let mesh_views = meshes
+        let mut mesh_views = meshes
             .iter()
             .map(|mesh| Mesh {
                 vertices: mesh
@@ -484,7 +484,60 @@ impl File3dm {
                     })
                     .unwrap_or_default(),
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let native_mesh_faces = archive
+            .objects
+            .iter()
+            .filter(|record| record.geometry_kind == GeometryKind::Mesh)
+            .map(|record| {
+                let data = record.class_data.ok_or(Error::Unsupported {
+                    capability: "a mesh object without class data",
+                })?;
+                decode_native_mesh_faces(source.as_bytes(), data, header.archive_version)
+            })
+            .collect::<Result<Vec<_>, _>>();
+        match native_mesh_faces {
+            Ok(native_mesh_faces) if native_mesh_faces.len() == mesh_views.len() => {
+                for (view, source_faces) in mesh_views.iter_mut().zip(native_mesh_faces) {
+                    let expected_triangles = source_faces.display_triangle_count();
+                    if source_faces.vertex_count == view.vertices.len()
+                        && expected_triangles == view.faces.len()
+                    {
+                        view.faces = source_faces.faces;
+                    } else {
+                        let message = format!(
+                            "native mesh-face projection skipped: source has {} vertices and {} display triangles; bridge has {} vertices and {} display triangles",
+                            source_faces.vertex_count,
+                            expected_triangles,
+                            view.vertices.len(),
+                            view.faces.len(),
+                        );
+                        metadata_error = Some(match metadata_error {
+                            Some(existing) => format!("{existing}; {message}"),
+                            None => message,
+                        });
+                    }
+                }
+            }
+            Ok(native_mesh_faces) => {
+                let message = format!(
+                    "native mesh-face projection skipped: archive has {} mesh objects but bridge produced {} mesh views",
+                    native_mesh_faces.len(),
+                    mesh_views.len(),
+                );
+                metadata_error = Some(match metadata_error {
+                    Some(existing) => format!("{existing}; {message}"),
+                    None => message,
+                });
+            }
+            Err(error) => {
+                let message = format!("native mesh-face projection: {error}");
+                metadata_error = Some(match metadata_error {
+                    Some(existing) => format!("{existing}; {message}"),
+                    None => message,
+                });
+            }
+        }
         let curves = match RhinoCodec.decode(
             &mut Cursor::new(source.as_bytes()),
             &DecodeOptions::default(),
@@ -558,8 +611,9 @@ impl File3dm {
     /// Native mesh tessellations decoded by the pure-Rust Rhino bridge.
     ///
     /// This is a read projection of source tessellations, not the complete
-    /// mutable `rhino3dm.Mesh` collection API. Native quad/ngon/cache fields
-    /// remain outside this bounded slice.
+    /// mutable `rhino3dm.Mesh` collection API. Native quad faces are exposed
+    /// through [`Self::mesh_views`]; ngon/cache fields remain outside this
+    /// bounded slice.
     pub fn meshes(&self) -> &[Tessellation] {
         &self.meshes
     }
@@ -780,9 +834,10 @@ pub enum MeshFace {
 
 /// The bounded mesh model currently supported by `File3dm`.
 ///
-/// Bridge-read meshes contain triangulated display faces. New Rust meshes can
-/// preserve triangle/quad arity and intentionally retain invalid indices to
-/// match Python's observable `Mesh.Faces.AddFace` behavior.
+/// Bridge-read meshes recover native triangle/quad face arity from retained
+/// class data while using the bridge for vertex channels. New Rust meshes also
+/// intentionally retain invalid indices to match Python's observable
+/// `Mesh.Faces.AddFace` behavior.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Mesh {
     pub vertices: Vec<Point3d>,
@@ -943,18 +998,14 @@ impl Mesh {
                     .map(|&index| usize::try_from(index))
                     .collect::<Result<_, _>>()
                     .ok()
-                    .filter(|indices: &Vec<usize>| {
-                        indices.iter().all(|&index| index < self.vertices.len())
-                    })
+                    .filter(|indices: &Vec<usize>| self.indices_are_valid(indices))
                     .unwrap_or_default(),
                 MeshFace::Quad(indices) => indices
                     .iter()
                     .map(|&index| usize::try_from(index))
                     .collect::<Result<_, _>>()
                     .ok()
-                    .filter(|indices: &Vec<usize>| {
-                        indices.iter().all(|&index| index < self.vertices.len())
-                    })
+                    .filter(|indices: &Vec<usize>| self.indices_are_valid(indices))
                     .unwrap_or_default(),
             };
             let triangles: Vec<[usize; 3]> = match indices.as_slice() {
@@ -1081,18 +1132,14 @@ impl Mesh {
                     .map(|&index| usize::try_from(index))
                     .collect::<Result<_, _>>()
                     .ok()
-                    .filter(|indices: &Vec<usize>| {
-                        indices.iter().all(|&index| index < self.vertices.len())
-                    })
+                    .filter(|indices: &Vec<usize>| self.indices_are_valid(indices))
                     .unwrap_or_default(),
                 MeshFace::Quad(indices) => indices
                     .iter()
                     .map(|&index| usize::try_from(index))
                     .collect::<Result<_, _>>()
                     .ok()
-                    .filter(|indices: &Vec<usize>| {
-                        indices.iter().all(|&index| index < self.vertices.len())
-                    })
+                    .filter(|indices: &Vec<usize>| self.indices_are_valid(indices))
                     .unwrap_or_default(),
             };
             for pair in indices
@@ -1118,9 +1165,16 @@ impl Mesh {
     }
 
     fn face_is_valid<const N: usize>(&self, indices: &[i32; N]) -> bool {
-        indices
-            .iter()
-            .all(|&index| usize::try_from(index).is_ok_and(|index| index < self.vertices.len()))
+        indices.iter().enumerate().all(|(index, &value)| {
+            usize::try_from(value).is_ok_and(|value| value < self.vertices.len())
+                && indices[..index].iter().all(|&prior| prior != value)
+        })
+    }
+
+    fn indices_are_valid(&self, indices: &[usize]) -> bool {
+        indices.iter().enumerate().all(|(index, &value)| {
+            value < self.vertices.len() && indices[..index].iter().all(|&prior| prior != value)
+        })
     }
 
     /// Write a standalone native mesh object through the Rust Rhino encoder.
@@ -2413,6 +2467,179 @@ struct Chunk {
     body: SourceRange,
     short: bool,
     value: i64,
+}
+
+/// Native `ON_MeshFace` records recovered from one retained mesh class-data
+/// payload. This deliberately excludes display-only triangulation and all
+/// vertex-channel decoding, which remain owned by the Rust geometry bridge.
+#[derive(Debug)]
+struct NativeMeshFaces {
+    vertex_count: usize,
+    faces: Vec<MeshFace>,
+}
+
+impl NativeMeshFaces {
+    fn display_triangle_count(&self) -> usize {
+        self.faces
+            .iter()
+            .filter(|face| native_mesh_face_is_valid(face, self.vertex_count))
+            .map(|face| match face {
+                MeshFace::Triangle(_) => 1,
+                MeshFace::Quad(_) => 2,
+            })
+            .sum()
+    }
+}
+
+/// Read the fixed-width native face array without interpreting render data.
+/// `ON_Mesh` stores every face as four indices; its triangle sentinel repeats
+/// the third index as the fourth. Optional header chunks are skipped with
+/// checked archive framing before the face array is admitted.
+fn decode_native_mesh_faces(
+    bytes: &[u8],
+    data: SourceRange,
+    archive_version: u32,
+) -> Result<NativeMeshFaces, Error> {
+    const MAX_NATIVE_MESH_FACES: usize = 10_000_000;
+    let mut offset = usize::try_from(data.offset).map_err(|_| Error::OutOfBounds {
+        offset: data.offset,
+        end: u64::MAX,
+        bound: bytes.len() as u64,
+    })?;
+    let data_end = usize::try_from(end(data)?).map_err(|_| Error::OutOfBounds {
+        offset: data.offset,
+        end: u64::MAX,
+        bound: bytes.len() as u64,
+    })?;
+    let version = take_u8(bytes, &mut offset, data_end)?;
+    let major = version >> 4;
+    if !matches!(major, 1 | 3) {
+        return Err(Error::Unsupported {
+            capability: "an ON_Mesh major version without native face decoding",
+        });
+    }
+    let vertex_count = usize::try_from(read_i32(bytes, &mut offset, data_end)?).map_err(|_| {
+        Error::InvalidChunkLength {
+            offset: offset.saturating_sub(4) as u64,
+            length: -1,
+        }
+    })?;
+    let face_count = usize::try_from(read_i32(bytes, &mut offset, data_end)?).map_err(|_| {
+        Error::InvalidChunkLength {
+            offset: offset.saturating_sub(4) as u64,
+            length: -1,
+        }
+    })?;
+    if face_count > MAX_NATIVE_MESH_FACES {
+        return Err(Error::Unsupported {
+            capability: "a mesh face array above the native face admission limit",
+        });
+    }
+    // Four bounding intervals, two scalar tolerances, 16 single-precision
+    // mesh-parameter values, and an integer packing field.
+    skip(bytes, &mut offset, data_end, 4 * 16 + 2 * 8 + 16 * 4 + 4)?;
+    let parameters_present = take_u8(bytes, &mut offset, data_end)?;
+    if parameters_present > 1 {
+        return Err(Error::Decode(
+            "invalid native mesh-parameters presence flag".to_owned(),
+        ));
+    }
+    if parameters_present != 0 {
+        skip_native_mesh_optional_chunk(bytes, &mut offset, data_end, archive_version)?;
+    }
+    for _ in 0..4 {
+        let curvature_present = take_u8(bytes, &mut offset, data_end)?;
+        if curvature_present > 1 {
+            return Err(Error::Decode(
+                "invalid native mesh-curvature presence flag".to_owned(),
+            ));
+        }
+        if curvature_present != 0 {
+            skip_native_mesh_optional_chunk(bytes, &mut offset, data_end, archive_version)?;
+        }
+    }
+    let width = read_i32(bytes, &mut offset, data_end)?;
+    let width = match width {
+        1 | 2 | 4 => width as usize,
+        _ => {
+            return Err(Error::Decode(
+                "invalid native mesh face-index width".to_owned(),
+            ))
+        }
+    };
+    let byte_count = face_count
+        .checked_mul(4)
+        .and_then(|count| count.checked_mul(width))
+        .ok_or(Error::OutOfBounds {
+            offset: offset as u64,
+            end: u64::MAX,
+            bound: data_end as u64,
+        })?;
+    let raw = take(bytes, &mut offset, data_end, byte_count)?;
+    let mut faces = Vec::new();
+    faces
+        .try_reserve_exact(face_count)
+        .map_err(|_| Error::Unsupported {
+            capability: "allocating the native mesh face array",
+        })?;
+    for face_index in 0..face_count {
+        let mut indices = [0_i32; 4];
+        for (slot, index) in indices.iter_mut().enumerate() {
+            let value_offset = (face_index * 4 + slot) * width;
+            *index = native_mesh_face_index(raw, value_offset, width) as i32;
+        }
+        faces.push(if indices[2] == indices[3] {
+            MeshFace::Triangle([indices[0], indices[1], indices[2]])
+        } else {
+            MeshFace::Quad(indices)
+        });
+    }
+    Ok(NativeMeshFaces {
+        vertex_count,
+        faces,
+    })
+}
+
+fn skip_native_mesh_optional_chunk(
+    bytes: &[u8],
+    offset: &mut usize,
+    data_end: usize,
+    archive_version: u32,
+) -> Result<(), Error> {
+    let chunk = chunk_at(bytes, *offset, data_end, archive_version)?;
+    if chunk.short {
+        return Err(Error::Unsupported {
+            capability: "a short optional native mesh header chunk",
+        });
+    }
+    *offset = usize::try_from(end(chunk.source)?).map_err(|_| Error::OutOfBounds {
+        offset: chunk.source.offset,
+        end: u64::MAX,
+        bound: data_end as u64,
+    })?;
+    Ok(())
+}
+
+fn native_mesh_face_index(bytes: &[u8], offset: usize, width: usize) -> u32 {
+    match width {
+        1 => u32::from(bytes[offset]),
+        2 => u32::from(u16::from_le_bytes(
+            bytes[offset..offset + 2].try_into().unwrap(),
+        )),
+        4 => u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()),
+        _ => unreachable!(),
+    }
+}
+
+fn native_mesh_face_is_valid(face: &MeshFace, vertex_count: usize) -> bool {
+    let indices: &[i32] = match face {
+        MeshFace::Triangle(indices) => indices,
+        MeshFace::Quad(indices) => indices,
+    };
+    indices.iter().enumerate().all(|(index, &value)| {
+        usize::try_from(value).is_ok_and(|value| value < vertex_count)
+            && indices[..index].iter().all(|&prior| prior != value)
+    })
 }
 
 /// Convert selected triangle-only bridge records to Rhino's native quad form.
@@ -4417,6 +4644,27 @@ fn mesh_uvs_and_topology_edges_are_indexed_and_deterministic() {
 }
 
 #[test]
+fn duplicate_mesh_face_indices_are_retained_but_not_valid() {
+    let mut mesh = Mesh::new();
+    for point in [
+        Point3d::new(0.0, 0.0, 0.0),
+        Point3d::new(1.0, 0.0, 0.0),
+        Point3d::new(0.0, 1.0, 0.0),
+        Point3d::new(1.0, 1.0, 0.0),
+    ] {
+        mesh.add_vertex(point);
+    }
+    assert_eq!(mesh.add_triangle([0, 1, 1]), -1);
+    assert_eq!(mesh.add_quad([0, 1, 2, 1]), -1);
+    assert_eq!(mesh.face_count(), 2);
+    assert_eq!(mesh.triangle_count(), 0);
+    assert_eq!(mesh.quad_count(), 0);
+    assert!(!mesh.compute_normals());
+    assert!(mesh.normals.is_empty());
+    assert!(mesh.topology_edges().is_empty());
+}
+
+#[test]
 fn point_cloud_core_has_python_style_add_count_query_and_clear() {
     let mut cloud = PointCloud::new();
     cloud.add(Point3d::new(1.0, 2.0, 3.0));
@@ -4530,5 +4778,36 @@ fn source_less_quad_mesh_patches_wide_native_face_indices() {
 
     let document = File3dm::read(&path).unwrap();
     assert_eq!(document.mesh_views().len(), 1);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn mesh_views_recover_native_triangle_and_quad_arity() {
+    let path = std::env::temp_dir().join(format!(
+        "rhino3dm-rs-native-mesh-face-reader-{}.3dm",
+        std::process::id()
+    ));
+    let mut mesh = Mesh::new();
+    for point in [
+        Point3d::new(0.0, 0.0, 0.0),
+        Point3d::new(1.0, 0.0, 0.0),
+        Point3d::new(1.0, 1.0, 0.0),
+        Point3d::new(0.0, 1.0, 0.0),
+        Point3d::new(2.0, 0.0, 0.0),
+    ] {
+        mesh.add_vertex(point);
+    }
+    mesh.add_quad([0, 1, 2, 3]);
+    mesh.add_triangle([1, 4, 2]);
+    mesh.write(&path).unwrap();
+
+    let document = File3dm::read(&path).unwrap();
+    let view = &document.mesh_views()[0];
+    assert_eq!(
+        view.faces,
+        vec![MeshFace::Quad([0, 1, 2, 3]), MeshFace::Triangle([1, 4, 2])]
+    );
+    assert_eq!(view.triangle_count(), 1);
+    assert_eq!(view.quad_count(), 1);
     std::fs::remove_file(path).unwrap();
 }
