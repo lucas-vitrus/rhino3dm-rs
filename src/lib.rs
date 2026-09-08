@@ -438,7 +438,11 @@ impl File3dm {
                         z: point.z,
                     })
                     .collect(),
-                faces: mesh.triangles.clone(),
+                faces: mesh
+                    .triangles
+                    .iter()
+                    .map(|indices| MeshFace::Triangle(indices.map(|index| index as i32)))
+                    .collect(),
             })
             .collect();
         let curves = match RhinoCodec.decode(
@@ -726,24 +730,119 @@ pub struct Point3d {
     pub z: f64,
 }
 
-/// The bounded, read-only mesh projection currently supported by `File3dm`.
-/// Faces are indexed triangles because the native bridge exposes display
-/// tessellation; original quad/ngon ownership remains separately diagnosed.
+/// One native mesh face. Unlike a render triangulation, this preserves whether
+/// a caller supplied a triangle or quad, including invalid source indices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MeshFace {
+    Triangle([i32; 3]),
+    Quad([i32; 4]),
+}
+
+/// The bounded mesh model currently supported by `File3dm`.
+///
+/// Bridge-read meshes contain triangulated display faces. New Rust meshes can
+/// preserve triangle/quad arity and intentionally retain invalid indices to
+/// match Python's observable `Mesh.Faces.AddFace` behavior.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Mesh {
     pub vertices: Vec<Point3d>,
-    pub faces: Vec<[u32; 3]>,
+    pub faces: Vec<MeshFace>,
 }
 
 impl Mesh {
+    /// Create an empty mesh, matching Python's `Mesh()` constructor.
+    pub const fn new() -> Self {
+        Self {
+            vertices: Vec::new(),
+            faces: Vec::new(),
+        }
+    }
+
     /// Python `Mesh.Vertices.Count` equivalent for the read projection.
     pub fn vertex_count(&self) -> usize {
         self.vertices.len()
     }
 
-    /// Python `Mesh.Faces.Count` equivalent for the triangulated projection.
+    /// Python `Mesh.Faces.Count` equivalent. Invalid retained faces count too.
     pub fn face_count(&self) -> usize {
         self.faces.len()
+    }
+
+    /// Python `Mesh.Faces.TriangleCount` equivalent: only valid triangles are
+    /// counted, while invalid retained faces remain inspectable.
+    pub fn triangle_count(&self) -> usize {
+        self.faces
+            .iter()
+            .filter(
+                |face| matches!(face, MeshFace::Triangle(indices) if self.face_is_valid(indices)),
+            )
+            .count()
+    }
+
+    /// Python `Mesh.Faces.QuadCount` equivalent for valid quad faces.
+    pub fn quad_count(&self) -> usize {
+        self.faces
+            .iter()
+            .filter(|face| matches!(face, MeshFace::Quad(indices) if self.face_is_valid(indices)))
+            .count()
+    }
+
+    /// Add one vertex and return its zero-based index.
+    pub fn add_vertex(&mut self, point: Point3d) -> usize {
+        let index = self.vertices.len();
+        self.vertices.push(point);
+        index
+    }
+
+    /// Replace one vertex. Returns false when the index is out of bounds.
+    pub fn set_vertex(&mut self, index: usize, point: Point3d) -> bool {
+        let Some(vertex) = self.vertices.get_mut(index) else {
+            return false;
+        };
+        *vertex = point;
+        true
+    }
+
+    /// Add a triangle face. The face is always retained. Returns its index
+    /// when all indices are valid, or `-1` just like Python `AddFace`.
+    pub fn add_triangle(&mut self, indices: [i32; 3]) -> i32 {
+        let index = self.faces.len() as i32;
+        self.faces.push(MeshFace::Triangle(indices));
+        if self.face_is_valid(&indices) {
+            index
+        } else {
+            -1
+        }
+    }
+
+    /// Add a quad face. The face is always retained. Returns its index when
+    /// valid, or `-1` for an invalid retained face.
+    pub fn add_quad(&mut self, indices: [i32; 4]) -> i32 {
+        let index = self.faces.len() as i32;
+        self.faces.push(MeshFace::Quad(indices));
+        if self.face_is_valid(&indices) {
+            index
+        } else {
+            -1
+        }
+    }
+
+    /// Replace one face and report whether the resulting face is valid.
+    pub fn set_face(&mut self, index: usize, face: MeshFace) -> bool {
+        let valid = match &face {
+            MeshFace::Triangle(indices) => self.face_is_valid(indices),
+            MeshFace::Quad(indices) => self.face_is_valid(indices),
+        };
+        let Some(destination) = self.faces.get_mut(index) else {
+            return false;
+        };
+        *destination = face;
+        valid
+    }
+
+    /// Clear every face while leaving vertices untouched.
+    pub fn clear_faces(&mut self) {
+        self.faces.clear();
     }
 
     /// Bounds-checked equivalent of `Mesh.Vertices.Point3dAt`.
@@ -752,8 +851,20 @@ impl Mesh {
     }
 
     /// Bounds-checked triangle query for the current display projection.
-    pub fn face(&self, index: usize) -> Option<[u32; 3]> {
+    pub fn face(&self, index: usize) -> Option<MeshFace> {
         self.faces.get(index).copied()
+    }
+
+    fn face_is_valid<const N: usize>(&self, indices: &[i32; N]) -> bool {
+        indices
+            .iter()
+            .all(|&index| usize::try_from(index).is_ok_and(|index| index < self.vertices.len()))
+    }
+}
+
+impl Default for Mesh {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -3467,14 +3578,9 @@ fn pbr_reconstruction_stays_fail_closed_until_all_channels_are_public() {
 
 #[test]
 fn mesh_projection_has_bounds_checked_python_shape_queries() {
-    let mesh = Mesh {
-        vertices: vec![Point3d {
-            x: 1.0,
-            y: 2.0,
-            z: 3.0,
-        }],
-        faces: vec![[0, 0, 0]],
-    };
+    let mut mesh = Mesh::new();
+    mesh.add_vertex(Point3d::new(1.0, 2.0, 3.0));
+    mesh.add_triangle([0, 0, 0]);
     assert_eq!(mesh.vertex_count(), 1);
     assert_eq!(mesh.face_count(), 1);
     assert_eq!(
@@ -3485,7 +3591,31 @@ fn mesh_projection_has_bounds_checked_python_shape_queries() {
             z: 3.0
         })
     );
-    assert_eq!(mesh.face(0), Some([0, 0, 0]));
+    assert_eq!(mesh.face(0), Some(MeshFace::Triangle([0, 0, 0])));
     assert_eq!(mesh.vertex(1), None);
     assert_eq!(mesh.face(1), None);
+}
+
+#[test]
+fn mesh_face_mutation_retains_invalid_faces_like_python() {
+    let mut mesh = Mesh::new();
+    for point in [
+        Point3d::new(0.0, 0.0, 0.0),
+        Point3d::new(1.0, 0.0, 0.0),
+        Point3d::new(1.0, 1.0, 0.0),
+        Point3d::new(0.0, 1.0, 0.0),
+    ] {
+        mesh.add_vertex(point);
+    }
+    assert_eq!(mesh.add_triangle([0, 1, 2]), 0);
+    assert_eq!(mesh.add_quad([0, 1, 2, 3]), 1);
+    assert_eq!(mesh.add_triangle([0, 1, 8]), -1);
+    assert_eq!(mesh.face_count(), 3);
+    assert_eq!(mesh.triangle_count(), 1);
+    assert_eq!(mesh.quad_count(), 1);
+    assert!(!mesh.set_face(0, MeshFace::Triangle([0, 1, 9])));
+    assert_eq!(mesh.face(0), Some(MeshFace::Triangle([0, 1, 9])));
+    assert_eq!(mesh.triangle_count(), 0);
+    mesh.clear_faces();
+    assert_eq!(mesh.face_count(), 0);
 }

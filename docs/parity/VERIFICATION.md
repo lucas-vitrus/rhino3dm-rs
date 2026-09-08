@@ -38,6 +38,16 @@ vertices and three display triangles. The quad-to-triangle expansion is
 reported as bridge tessellation data; the original native quad face is not
 claimed to be preserved by this projection.
 
+## P04 native mesh mutation seed
+
+Rust-created `Mesh` values now preserve triangle versus quad face arity and
+provide bounded vertex/face access plus add, replace, and clear operations.
+The installed Python `rhino3dm` 8.17.0 oracle establishes that
+`Mesh.Faces.AddFace` retains an invalid face while returning `-1`; valid
+triangle and quad counts exclude that retained invalid face. Rust matches that
+contract for the supported collection methods. This does not yet establish
+native source-mesh quad recovery, normals, UVs, colors, topology, or writing.
+
 ## P05 curve read projection seed
 
 `File3dm::curves()` now exposes the bridge's typed curve carriers without
@@ -64,6 +74,7 @@ parity, and curve writing remain separate obligations.
 | P03 Rust point writer → Python `rhino3dm` readback | PASS: one point; exact coordinates `(1.25, 2.5, 3.75)`; named-point readback also preserves `NamedPoint` |
 | P03 Python-authored layer/name/UserString fixture → Rust `File3dm` read projection | PASS: one layer, one point, one object name, one UserString; metadata diagnostics remain explicit |
 | P04 Python-authored mixed mesh fixture → Rust `File3dm::meshes()` projection | PASS: one mesh, five vertices, three indexed triangles; quad expansion explicitly reported |
+| P04 mesh collection mutation against Python 8.17.0 | PASS: vertex addition, valid triangle/quad counts, invalid-face retention with `-1`, replacement and face clearing |
 | P05 Python-authored line/polyline/NURBS fixture → Rust `File3dm::curves()` projection | PASS: three typed curve carriers; no sampled-point flattening |
 | Primary Python runtime inspection | Distribution 8.32.1, runtime 8.32.2; 212 exported classes including 49 enums |
 | Clay Python runtime inspection | Distribution/runtime 8.17.0; 193 exported classes including 46 enums |
