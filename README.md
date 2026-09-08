@@ -89,6 +89,7 @@ overload-aware ledger remains the source of truth: it currently contains
 - [x] Decode structural `File3dm` data, layers, points, names, visibility, basic attributes, and UserStrings.
 - [x] Decode instance definitions/references and transforms; expose the semantic `SceneDocument` projection.
 - [x] Provide the bounded Rust point writer and explicit metadata diagnostics.
+- [x] Project Python-shaped object-attribute defaults, source modes, colors, indices, and group mutation in memory.
 - [ ] Implement mutable object/table authoring and complete attributes/string/metadata round trips.
 - [ ] Qualify general document mutation against Python readback for all supported object types.
 

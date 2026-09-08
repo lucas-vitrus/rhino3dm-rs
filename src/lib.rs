@@ -754,11 +754,10 @@ impl File3dm {
             });
         }
         if !self.layers.is_empty()
-            || self.objects.iter().any(|object| {
-                object.attributes.id.is_some()
-                    || object.attributes.layer_index.is_some()
-                    || !object.attributes.user_strings.is_empty()
-            })
+            || self
+                .objects
+                .iter()
+                .any(|object| object.attributes.has_unserializable_state())
         {
             return Err(Error::Unsupported {
                 capability: "serializing layers or point attributes",
@@ -1922,6 +1921,73 @@ pub enum GeometryKind {
     Brep,
     Extrusion,
     Other,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(i32)]
+pub enum ObjectMode {
+    #[default]
+    Normal = 0,
+    Hidden = 1,
+    Locked = 2,
+    InstanceDefinitionObject = 3,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(i32)]
+pub enum ObjectLinetypeSource {
+    #[default]
+    LinetypeFromLayer = 0,
+    LinetypeFromObject = 1,
+    LinetypeFromParent = 3,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(i32)]
+pub enum ObjectColorSource {
+    #[default]
+    ColorFromLayer = 0,
+    ColorFromObject = 1,
+    ColorFromMaterial = 2,
+    ColorFromParent = 3,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(i32)]
+pub enum ObjectPlotColorSource {
+    #[default]
+    PlotColorFromLayer = 0,
+    PlotColorFromObject = 1,
+    PlotColorFromDisplay = 2,
+    PlotColorFromParent = 3,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(i32)]
+pub enum ObjectPlotWeightSource {
+    #[default]
+    PlotWeightFromLayer = 0,
+    PlotWeightFromObject = 1,
+    PlotWeightFromParent = 3,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(i32)]
+pub enum ObjectMaterialSource {
+    #[default]
+    MaterialFromLayer = 0,
+    MaterialFromObject = 1,
+    MaterialFromParent = 3,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(i32)]
+pub enum ObjectDecoration {
+    #[default]
+    None = 0,
+    StartArrowhead = 8,
+    EndArrowhead = 16,
+    BothArrowhead = 24,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -3248,12 +3314,31 @@ impl Interval {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ObjectAttributes {
     pub source: SourceRange,
     pub id: Option<[u8; 16]>,
     pub name: Option<String>,
+    pub url: Option<String>,
     pub layer_index: Option<i32>,
+    pub linetype_index: i32,
+    pub material_index: i32,
+    pub mode: ObjectMode,
+    pub visible: bool,
+    pub casts_shadows: bool,
+    pub receives_shadows: bool,
+    pub linetype_source: ObjectLinetypeSource,
+    pub color_source: ObjectColorSource,
+    pub plot_color_source: ObjectPlotColorSource,
+    pub plot_weight_source: ObjectPlotWeightSource,
+    pub material_source: ObjectMaterialSource,
+    pub object_color: [u8; 4],
+    pub plot_color: [u8; 4],
+    pub display_order: i32,
+    pub plot_weight: f64,
+    pub object_decoration: ObjectDecoration,
+    pub wire_density: i32,
+    pub groups: Vec<i32>,
     pub user_strings: Vec<(String, String)>,
     pub coverage: AttributeCoverage,
     /// Backwards-compatible shorthand for `coverage.is_complete()`.
@@ -3262,7 +3347,44 @@ pub struct ObjectAttributes {
     pub complete: bool,
 }
 
+impl Default for ObjectAttributes {
+    fn default() -> Self {
+        Self {
+            source: SourceRange::default(),
+            id: None,
+            name: None,
+            url: None,
+            layer_index: None,
+            linetype_index: -1,
+            material_index: -1,
+            mode: ObjectMode::Normal,
+            visible: true,
+            casts_shadows: true,
+            receives_shadows: true,
+            linetype_source: ObjectLinetypeSource::LinetypeFromLayer,
+            color_source: ObjectColorSource::ColorFromLayer,
+            plot_color_source: ObjectPlotColorSource::PlotColorFromLayer,
+            plot_weight_source: ObjectPlotWeightSource::PlotWeightFromLayer,
+            material_source: ObjectMaterialSource::MaterialFromLayer,
+            object_color: [0, 0, 0, 255],
+            plot_color: [0, 0, 0, 255],
+            display_order: 0,
+            plot_weight: 0.0,
+            object_decoration: ObjectDecoration::None,
+            wire_density: 1,
+            groups: Vec::new(),
+            user_strings: Vec::new(),
+            coverage: AttributeCoverage::Complete,
+            complete: true,
+        }
+    }
+}
+
 impl ObjectAttributes {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Create authoring attributes with a caller-supplied native object ID.
     pub fn with_id(id: [u8; 16]) -> Self {
         Self {
@@ -3301,6 +3423,57 @@ impl ObjectAttributes {
         self.user_strings
             .retain(|(stored_key, _)| stored_key != key);
         self.user_strings.len() != before
+    }
+
+    pub fn group_count(&self) -> usize {
+        self.groups.len()
+    }
+
+    pub fn get_group_list(&self) -> &[i32] {
+        &self.groups
+    }
+
+    pub fn add_to_group(&mut self, group_index: i32) {
+        if group_index >= 0 && !self.groups.contains(&group_index) {
+            self.groups.push(group_index);
+        }
+    }
+
+    pub fn remove_from_group(&mut self, group_index: i32) -> bool {
+        let before = self.groups.len();
+        self.groups.retain(|stored| *stored != group_index);
+        self.groups.len() != before
+    }
+
+    pub fn remove_from_all_groups(&mut self) {
+        self.groups.clear();
+    }
+
+    /// True when the current typed state contains a field whose native writer
+    /// has not yet been matched against a Python-authored archive.
+    pub fn has_unserializable_state(&self) -> bool {
+        self.id.is_some()
+            || self.url.is_some()
+            || self.layer_index.is_some()
+            || self.linetype_index != -1
+            || self.material_index != -1
+            || self.mode != ObjectMode::Normal
+            || !self.visible
+            || !self.casts_shadows
+            || !self.receives_shadows
+            || self.linetype_source != ObjectLinetypeSource::LinetypeFromLayer
+            || self.color_source != ObjectColorSource::ColorFromLayer
+            || self.plot_color_source != ObjectPlotColorSource::PlotColorFromLayer
+            || self.plot_weight_source != ObjectPlotWeightSource::PlotWeightFromLayer
+            || self.material_source != ObjectMaterialSource::MaterialFromLayer
+            || self.object_color != [0, 0, 0, 255]
+            || self.plot_color != [0, 0, 0, 255]
+            || self.display_order != 0
+            || self.plot_weight != 0.0
+            || self.object_decoration != ObjectDecoration::None
+            || self.wire_density != 1
+            || !self.groups.is_empty()
+            || !self.user_strings.is_empty()
     }
 
     pub const fn is_complete(&self) -> bool {
@@ -4754,9 +4927,7 @@ fn parse_attributes(bytes: &[u8], source: SourceRange) -> Result<ObjectAttribute
         id: Some(id),
         name: None,
         layer_index: Some(layer_index),
-        user_strings: Vec::new(),
-        coverage: AttributeCoverage::Complete,
-        complete: true,
+        ..ObjectAttributes::default()
     };
     while offset < end {
         let tag = take_u8(bytes, &mut offset, end)?;
@@ -5395,6 +5566,33 @@ mod tests {
             attributes.user_strings,
             vec![("purpose".into(), "validation".into())]
         );
+    }
+
+    #[test]
+    fn object_attributes_match_python_defaults_and_group_mutation() {
+        let mut attributes = ObjectAttributes::new();
+        assert_eq!(attributes.mode, ObjectMode::Normal);
+        assert!(attributes.visible);
+        assert!(attributes.casts_shadows);
+        assert!(attributes.receives_shadows);
+        assert_eq!(attributes.linetype_index, -1);
+        assert_eq!(attributes.material_index, -1);
+        assert_eq!(attributes.object_color, [0, 0, 0, 255]);
+        assert_eq!(attributes.plot_color, [0, 0, 0, 255]);
+        assert_eq!(attributes.wire_density, 1);
+        assert!(!attributes.has_unserializable_state());
+
+        attributes.add_to_group(4);
+        attributes.add_to_group(4);
+        attributes.add_to_group(2);
+        assert_eq!(attributes.get_group_list(), &[4, 2]);
+        assert_eq!(attributes.group_count(), 2);
+        assert!(attributes.remove_from_group(4));
+        assert!(!attributes.remove_from_group(4));
+        attributes.remove_from_all_groups();
+        assert_eq!(attributes.group_count(), 0);
+        attributes.visible = false;
+        assert!(attributes.has_unserializable_state());
     }
 
     #[test]

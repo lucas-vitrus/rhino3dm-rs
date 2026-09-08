@@ -22,6 +22,14 @@ their native presentation/userdata wire contracts have exact round-trip tests.
 Decoded metadata failures are exposed through `File3dm::metadata_error()` and
 are never represented as an empty successful table.
 
+The P03 attribute projection now also carries the Python default state for
+visibility/shadow flags, object and plot colors, source modes, linetype and
+material indices, display/plot fields, decoration, wire density, URL, and
+group membership. Group insertion/removal is deterministic and duplicate-safe.
+The writer rejects any non-default field whose native attribute tags do not yet
+have an exact round-trip fixture; this is intentionally not counted as wire
+parity.
+
 ## Executed checks
 
 ## P04 mesh read projection slice
@@ -141,6 +149,7 @@ non-finite/intersection edge matrix are still open.
 | `cargo run --quiet --bin rhino3dm-index -- fixtures/structural-benchmark-v1.3dm` | PASS: 2,305 framed objects; 2,049 points; 256 instance references; one definition with one member; no reported framing/geometry parse errors |
 | P03 Rust point writer → Python `rhino3dm` readback | PASS: one point; exact coordinates `(1.25, 2.5, 3.75)`; named-point readback also preserves `NamedPoint` |
 | P03 Python-authored layer/name/UserString fixture → Rust `File3dm` read projection | PASS: one layer, one point, one object name, one UserString; metadata diagnostics remain explicit |
+| P03 ObjectAttributes default/group projection | PASS: Python 8.17.0 defaults and duplicate-safe group add/remove behavior are represented and tested in Rust |
 | P04 Python-authored mixed mesh fixture → Rust `File3dm::meshes()` projection | PASS: one mesh, five vertices, three indexed triangles; quad expansion explicitly reported |
 | P04 native mesh-face recovery against Python 8.17.0 | PASS: source mixed fixture recovers two faces in `mesh_views()` as one triangle and one quad while bridge tessellation remains three triangles |
 | P04 mesh collection mutation against Python 8.17.0 | PASS: vertex addition, valid triangle/quad counts, invalid-face retention with `-1`, replacement and face clearing |
