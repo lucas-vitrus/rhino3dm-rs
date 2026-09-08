@@ -709,6 +709,28 @@ pub struct Mesh {
     pub faces: Vec<[u32; 3]>,
 }
 
+impl Mesh {
+    /// Python `Mesh.Vertices.Count` equivalent for the read projection.
+    pub fn vertex_count(&self) -> usize {
+        self.vertices.len()
+    }
+
+    /// Python `Mesh.Faces.Count` equivalent for the triangulated projection.
+    pub fn face_count(&self) -> usize {
+        self.faces.len()
+    }
+
+    /// Bounds-checked equivalent of `Mesh.Vertices.Point3dAt`.
+    pub fn vertex(&self, index: usize) -> Option<Point3d> {
+        self.vertices.get(index).copied()
+    }
+
+    /// Bounds-checked triangle query for the current display projection.
+    pub fn face(&self, index: usize) -> Option<[u32; 3]> {
+        self.faces.get(index).copied()
+    }
+}
+
 /// A mutable single-precision point corresponding to Python's
 /// `rhino3dm.Point3f`.
 ///
@@ -3415,4 +3437,29 @@ fn pbr_reconstruction_stays_fail_closed_until_all_channels_are_public() {
     assert!(!capabilities.mesh_uv_channels);
     assert!(!capabilities.texture_mapping_transforms);
     assert!(!capabilities.per_face_materials);
+}
+
+#[test]
+fn mesh_projection_has_bounds_checked_python_shape_queries() {
+    let mesh = Mesh {
+        vertices: vec![Point3d {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
+        }],
+        faces: vec![[0, 0, 0]],
+    };
+    assert_eq!(mesh.vertex_count(), 1);
+    assert_eq!(mesh.face_count(), 1);
+    assert_eq!(
+        mesh.vertex(0),
+        Some(Point3d {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0
+        })
+    );
+    assert_eq!(mesh.face(0), Some([0, 0, 0]));
+    assert_eq!(mesh.vertex(1), None);
+    assert_eq!(mesh.face(1), None);
 }
