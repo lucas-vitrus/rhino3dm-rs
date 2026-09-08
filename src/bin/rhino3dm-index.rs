@@ -156,6 +156,7 @@ fn main() {
                 );
             }
             println!("mesh_views={}", file.mesh_views().len());
+            println!("curves={}", file.curves().len());
             println!(
                 "instance_references_decoded={}",
                 file.archive()

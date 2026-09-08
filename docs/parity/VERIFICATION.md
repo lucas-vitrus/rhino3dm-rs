@@ -38,6 +38,14 @@ vertices and three display triangles. The quad-to-triangle expansion is
 reported as bridge tessellation data; the original native quad face is not
 claimed to be preserved by this projection.
 
+## P05 curve read projection seed
+
+`File3dm::curves()` now exposes the bridge's typed curve carriers without
+sampling them into display points. A Python-authored fixture containing a line
+curve, polyline curve, and quadratic NURBS curve was decoded as three typed
+curve carriers. This is still read-only: mutable curve wrappers, evaluation
+parity, and curve writing remain separate obligations.
+
 | Check | Result |
 | --- | --- |
 | `cargo test --workspace --all-targets` | PASS: 24 library tests + 3 renderer tests; binary targets had no unit tests |
@@ -56,6 +64,7 @@ claimed to be preserved by this projection.
 | P03 Rust point writer → Python `rhino3dm` readback | PASS: one point; exact coordinates `(1.25, 2.5, 3.75)`; named-point readback also preserves `NamedPoint` |
 | P03 Python-authored layer/name/UserString fixture → Rust `File3dm` read projection | PASS: one layer, one point, one object name, one UserString; metadata diagnostics remain explicit |
 | P04 Python-authored mixed mesh fixture → Rust `File3dm::meshes()` projection | PASS: one mesh, five vertices, three indexed triangles; quad expansion explicitly reported |
+| P05 Python-authored line/polyline/NURBS fixture → Rust `File3dm::curves()` projection | PASS: three typed curve carriers; no sampled-point flattening |
 | Primary Python runtime inspection | Distribution 8.32.1, runtime 8.32.2; 212 exported classes including 49 enums |
 | Clay Python runtime inspection | Distribution/runtime 8.17.0; 193 exported classes including 46 enums |
 | Primary inventory regenerated in a fresh output directory | PASS: exact JSON equality with checked-in primary snapshot |

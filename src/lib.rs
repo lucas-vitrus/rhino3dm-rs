@@ -7,6 +7,7 @@
 use cadmpeg_codec_rhino::{RhinoArchiveVersion, RhinoCodec, RhinoEncoder};
 use cadmpeg_ir::codec::{EncodeInput, Encoder};
 use cadmpeg_ir::document::CadIr;
+use cadmpeg_ir::geometry::Curve;
 use cadmpeg_ir::ids::{BodyId, PointId, RegionId, ShellId, VertexId};
 use cadmpeg_ir::math::Point3 as IrPoint3;
 use cadmpeg_ir::tessellation::Tessellation;
@@ -229,6 +230,7 @@ pub struct File3dm {
     objects: Vec<PointObject>,
     meshes: Vec<Tessellation>,
     mesh_views: Vec<Mesh>,
+    curves: Vec<Curve>,
     metadata_error: Option<String>,
 }
 
@@ -338,6 +340,7 @@ impl File3dm {
             objects: Vec::new(),
             meshes: Vec::new(),
             mesh_views: Vec::new(),
+            curves: Vec::new(),
             metadata_error: None,
         }
     }
@@ -438,6 +441,20 @@ impl File3dm {
                 faces: mesh.triangles.clone(),
             })
             .collect();
+        let curves = match RhinoCodec.decode(
+            &mut Cursor::new(source.as_bytes()),
+            &DecodeOptions::default(),
+        ) {
+            Ok(decoded) => decoded.ir().model.curves.clone(),
+            Err(error) => {
+                let message = format!("curve projection: {error}");
+                metadata_error = Some(match metadata_error {
+                    Some(existing) => format!("{existing}; {message}"),
+                    None => message,
+                });
+                Vec::new()
+            }
+        };
         Ok(Self {
             header,
             archive,
@@ -446,6 +463,7 @@ impl File3dm {
             objects,
             meshes,
             mesh_views,
+            curves,
             metadata_error,
         })
     }
@@ -505,6 +523,14 @@ impl File3dm {
     /// Read-only mesh values with the Python-facing vertex/face shape.
     pub fn mesh_views(&self) -> &[Mesh] {
         &self.mesh_views
+    }
+
+    /// Typed curve carriers decoded by the pure-Rust Rhino bridge.
+    ///
+    /// This is a read projection; mutable `rhino3dm.Curve` wrappers and
+    /// object-table writing are intentionally not implied by this method.
+    pub fn curves(&self) -> &[Curve] {
+        &self.curves
     }
 
     /// Add a layer and return its stable document index.
