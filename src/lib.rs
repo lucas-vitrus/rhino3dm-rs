@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Cursor, Read};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::Arc as SharedArc;
 
 pub mod scene;
 pub mod step;
@@ -142,11 +142,11 @@ pub struct SourceRange {
 /// inspected without rereading the input or inventing a decoded replacement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceStore {
-    bytes: Arc<[u8]>,
+    bytes: SharedArc<[u8]>,
 }
 
 impl SourceStore {
-    fn new(bytes: Arc<[u8]>) -> Self {
+    fn new(bytes: SharedArc<[u8]>) -> Self {
         Self { bytes }
     }
 
@@ -367,7 +367,7 @@ impl File3dm {
                 instance_definitions: Vec::new(),
                 end_of_file: SourceRange::default(),
             },
-            source: SourceStore::new(Arc::from([])),
+            source: SourceStore::new(SharedArc::from([])),
             layers: Vec::new(),
             objects: Vec::new(),
             meshes: Vec::new(),
@@ -412,14 +412,14 @@ impl File3dm {
     }
 
     /// Structurally index retained 3DM bytes without copying them again.
-    pub fn from_bytes(bytes: impl Into<Arc<[u8]>>) -> Result<Self, Error> {
+    pub fn from_bytes(bytes: impl Into<SharedArc<[u8]>>) -> Result<Self, Error> {
         Self::from_bytes_with_limits(bytes, ReadLimits::default())
     }
 
     /// Structurally index retained 3DM bytes under an explicit source-byte
     /// admission limit without copying the caller's bytes again.
     pub fn from_bytes_with_limits(
-        bytes: impl Into<Arc<[u8]>>,
+        bytes: impl Into<SharedArc<[u8]>>,
         limits: ReadLimits,
     ) -> Result<Self, Error> {
         let source = SourceStore::new(bytes.into());
@@ -3441,6 +3441,226 @@ impl Sphere {
     }
 }
 
+/// A bounded analytic circular arc corresponding to Python `rhino3dm.Arc`.
+/// The public parameter is the plane angle in radians, matching the native
+/// binding's `PointAt`, `StartAngle`, and `EndAngle` contract.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Arc {
+    pub plane: Plane,
+    pub radius: f64,
+    pub start_angle: f64,
+    pub end_angle: f64,
+}
+
+impl Arc {
+    pub const fn new(center: Point3d, radius: f64, angle_radians: f64) -> Self {
+        Self {
+            plane: Plane {
+                origin: center,
+                ..Plane::world_xy()
+            },
+            radius,
+            start_angle: 0.0,
+            end_angle: angle_radians,
+        }
+    }
+
+    pub const fn from_circle(circle: Circle, angle_radians: f64) -> Self {
+        Self {
+            plane: circle.plane,
+            radius: circle.radius,
+            start_angle: 0.0,
+            end_angle: angle_radians,
+        }
+    }
+
+    pub const fn center(self) -> Point3d {
+        self.plane.origin
+    }
+
+    pub const fn angle_radians(self) -> f64 {
+        self.end_angle - self.start_angle
+    }
+
+    pub fn angle_degrees(self) -> f64 {
+        self.angle_radians().to_degrees()
+    }
+
+    pub fn is_valid(self) -> bool {
+        self.plane.is_valid()
+            && self.radius.is_finite()
+            && self.radius > 0.0
+            && self.start_angle.is_finite()
+            && self.end_angle.is_finite()
+            && self.angle_radians().abs() > 0.0
+            && self.angle_radians().abs() <= std::f64::consts::TAU + 1e-12
+    }
+
+    pub fn is_circle(self) -> bool {
+        (self.angle_radians().abs() - std::f64::consts::TAU).abs() <= 1e-12
+    }
+
+    pub fn diameter(self) -> f64 {
+        self.radius * 2.0
+    }
+
+    pub fn circumference(self) -> f64 {
+        std::f64::consts::TAU * self.radius
+    }
+
+    pub fn length(self) -> f64 {
+        self.radius * self.angle_radians().abs()
+    }
+
+    pub fn point_at(self, parameter: f64) -> Point3d {
+        let (sine, cosine) = parameter.sin_cos();
+        self.plane
+            .point_at(self.radius * cosine, self.radius * sine)
+    }
+
+    pub fn tangent_at(self, parameter: f64) -> Vector3d {
+        let (sine, cosine) = parameter.sin_cos();
+        let direction = add_vectors(
+            scale_vector(self.plane.x_axis, -sine),
+            scale_vector(self.plane.y_axis, cosine),
+        );
+        scale_vector(direction, self.angle_radians().signum())
+    }
+
+    pub fn start_point(self) -> Point3d {
+        self.point_at(self.start_angle)
+    }
+
+    pub fn end_point(self) -> Point3d {
+        self.point_at(self.end_angle)
+    }
+
+    pub fn mid_point(self) -> Point3d {
+        self.point_at((self.start_angle + self.end_angle) / 2.0)
+    }
+
+    pub fn angle_domain(self) -> Interval {
+        Interval::new(self.start_angle, self.end_angle)
+    }
+
+    pub fn closest_parameter(self, test_point: Point3d) -> f64 {
+        let delta = Vector3d::new(
+            test_point.x - self.center().x,
+            test_point.y - self.center().y,
+            test_point.z - self.center().z,
+        );
+        let parameter = delta
+            .dot(self.plane.y_axis)
+            .atan2(delta.dot(self.plane.x_axis));
+        self.clamp_parameter(parameter)
+    }
+
+    pub fn closest_point(self, test_point: Point3d) -> Point3d {
+        self.point_at(self.closest_parameter(test_point))
+    }
+
+    pub fn bounding_box(self) -> BoundingBox {
+        let mut parameters = vec![self.start_angle, self.end_angle];
+        let low = self.start_angle.min(self.end_angle);
+        let high = self.start_angle.max(self.end_angle);
+        let first_quadrant = (low / (std::f64::consts::FRAC_PI_2)).ceil() as i32;
+        let last_quadrant = (high / (std::f64::consts::FRAC_PI_2)).floor() as i32;
+        for index in first_quadrant..=last_quadrant {
+            parameters.push(f64::from(index) * std::f64::consts::FRAC_PI_2);
+        }
+        let points = parameters
+            .into_iter()
+            .map(|parameter| self.point_at(parameter))
+            .collect::<Vec<_>>();
+        BoundingBox::from_coordinates(
+            points
+                .iter()
+                .map(|point| point.x)
+                .fold(f64::INFINITY, f64::min),
+            points
+                .iter()
+                .map(|point| point.y)
+                .fold(f64::INFINITY, f64::min),
+            points
+                .iter()
+                .map(|point| point.z)
+                .fold(f64::INFINITY, f64::min),
+            points
+                .iter()
+                .map(|point| point.x)
+                .fold(f64::NEG_INFINITY, f64::max),
+            points
+                .iter()
+                .map(|point| point.y)
+                .fold(f64::NEG_INFINITY, f64::max),
+            points
+                .iter()
+                .map(|point| point.z)
+                .fold(f64::NEG_INFINITY, f64::max),
+        )
+    }
+
+    pub fn reverse(&mut self) {
+        let start = self.start_angle;
+        self.start_angle = -self.end_angle;
+        self.end_angle = -start;
+        self.plane.y_axis = scale_vector(self.plane.y_axis, -1.0);
+        self.plane.z_axis = scale_vector(self.plane.z_axis, -1.0);
+    }
+
+    pub fn trim(&mut self, domain: Interval) -> bool {
+        let low = self.start_angle.min(self.end_angle);
+        let high = self.start_angle.max(self.end_angle);
+        if !domain.t0.is_finite()
+            || !domain.t1.is_finite()
+            || domain.t0 < low
+            || domain.t0 > high
+            || domain.t1 < low
+            || domain.t1 > high
+            || domain.t0 == domain.t1
+        {
+            return false;
+        }
+        self.start_angle = domain.t0;
+        self.end_angle = domain.t1;
+        true
+    }
+
+    pub fn transform(&mut self, transform: Transform) -> bool {
+        if !transform.is_valid() || !self.is_valid() {
+            return false;
+        }
+        let x_axis = transform_vector(transform, self.plane.x_axis);
+        let y_axis = transform_vector(transform, self.plane.y_axis);
+        let x_scale = x_axis.length();
+        let y_scale = y_axis.length();
+        if !x_scale.is_finite()
+            || !y_scale.is_finite()
+            || x_scale == 0.0
+            || (x_scale - y_scale).abs() > 1e-12 * x_scale.max(y_scale)
+            || x_axis.dot(y_axis).abs() > 1e-12 * x_scale * y_scale
+        {
+            return false;
+        }
+        let center = self.center().transformed(transform);
+        let plane = Plane::from_origin_axes(x_axis, y_axis, center);
+        if !plane.is_valid() {
+            return false;
+        }
+        self.plane = plane;
+        self.radius *= x_scale;
+        true
+    }
+
+    fn clamp_parameter(self, parameter: f64) -> f64 {
+        if self.start_angle <= self.end_angle {
+            parameter.clamp(self.start_angle, self.end_angle)
+        } else {
+            parameter.clamp(self.end_angle, self.start_angle)
+        }
+    }
+}
+
 fn add_vectors(left: Vector3d, right: Vector3d) -> Vector3d {
     Vector3d::new(left.x + right.x, left.y + right.y, left.z + right.z)
 }
@@ -5719,6 +5939,58 @@ mod tests {
         assert_eq!(meridian.center(), Point3d::default());
         assert_eq!(meridian.radius, 2.0);
         assert!(meridian.is_valid());
+    }
+
+    #[test]
+    fn arc_evaluation_and_domain_match_python_contract() {
+        let arc = Arc::new(Point3d::default(), 2.0, std::f64::consts::FRAC_PI_2);
+        assert!(arc.is_valid());
+        assert!(!arc.is_circle());
+        assert_eq!(arc.start_point(), Point3d::new(2.0, 0.0, 0.0));
+        assert!((arc.end_point().x).abs() < 1e-12);
+        assert!((arc.end_point().y - 2.0).abs() < 1e-12);
+        assert_eq!(arc.mid_point(), arc.point_at(std::f64::consts::FRAC_PI_4));
+        assert!((arc.length() - std::f64::consts::PI).abs() < 1e-12);
+        assert_eq!(arc.diameter(), 4.0);
+        assert_eq!(
+            arc.angle_domain(),
+            Interval::new(0.0, std::f64::consts::FRAC_PI_2)
+        );
+        assert_eq!(
+            arc.closest_parameter(Point3d::new(-2.0, 0.0, 0.0)),
+            std::f64::consts::FRAC_PI_2
+        );
+        assert_eq!(
+            arc.closest_point(Point3d::new(1.0, 1.0, 0.0)),
+            arc.mid_point()
+        );
+        let bounds = arc.bounding_box();
+        assert!(bounds.min.x.abs() < 1e-12);
+        assert_eq!(bounds.min.y, 0.0);
+        assert_eq!(bounds.max, Point3d::new(2.0, 2.0, 0.0));
+    }
+
+    #[test]
+    fn arc_reverse_trim_and_transform_are_fail_closed() {
+        let mut arc = Arc::new(Point3d::default(), 2.0, std::f64::consts::FRAC_PI_2);
+        assert!(arc.trim(Interval::new(0.25, 1.0)));
+        assert!((arc.angle_radians() - 0.75).abs() < 1e-12);
+        assert!(!arc.trim(Interval::new(-1.0, 1.0)));
+        let before = arc;
+        arc.reverse();
+        assert_eq!(arc.start_point(), before.end_point());
+        assert_eq!(arc.end_point(), before.start_point());
+        assert!(arc.transform(Transform::translation(1.0, 2.0, 3.0)));
+        assert_eq!(arc.center(), Point3d::new(1.0, 2.0, 3.0));
+        let nonuniform = Transform {
+            matrix: [
+                [2.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        };
+        assert!(!arc.transform(nonuniform));
     }
 
     #[test]

@@ -115,7 +115,8 @@ parity, and curve writing remain separate obligations.
 
 ## P02 analytic value-object slice
 
-The current P02 increment adds typed `Plane` and `Circle` values. `Plane`
+The current P02 increment adds typed `Plane`, `Circle`, `Sphere`, and `Arc`
+values. `Plane`
 preserves the Python default zero sentinel, WorldXY/WorldYZ/WorldZX frames,
 origin/normal/point/axis constructors, writable public state, two- and
 three-parameter point evaluation, rotation as a returned copy, and nested
@@ -124,14 +125,18 @@ center/radius/normal queries, validity, diameter/circumference, point and
 tangent evaluation, axis-aligned bounds, closest parameter/point, plane
 membership, reverse/translate, and conformal transform admission. A
 nonuniform transform is rejected because it would not remain a circle.
+`Sphere` covers spherical point/normal evaluation, poles, closest queries, and
+latitude/longitude circle construction. `Arc` covers angle-domain evaluation,
+endpoints/midpoint, bounds, closest queries, trimming, reversal, and
+conformal-transform admission.
 
-This is an oracle-shaped analytic slice, not completion of P02: Arc, Box,
-Box, Cone, Cylinder, UUID contracts, units/tolerances, and the remaining
+This is an oracle-shaped analytic slice, not completion of P02: Box, Cone,
+Cylinder, UUID contracts, units/tolerances, and the remaining
 non-finite/intersection edge matrix are still open.
 
 | Check | Result |
 | --- | --- |
-| `cargo test --workspace --all-targets` | PASS: 50 library tests + 3 renderer tests; binary targets had no unit tests |
+| `cargo test --workspace --all-targets` | PASS: 52 library tests + 3 renderer tests; binary targets had no unit tests |
 | `cargo clippy --workspace --all-targets -- -D warnings` | PASS |
 | `cargo fmt --all` and `git diff --check` | PASS |
 | Paired `math-basics-v1` Python/Rust conformance | PASS with `atol=rtol=1e-12`; covers noncommuting composition, inverse fallback, Point3d transform, Vector3d mutation and observed f32 narrowing in `Translation(Vector3d)` |
@@ -143,6 +148,7 @@ non-finite/intersection edge matrix are still open.
 | P02 Plane value-object slice | PASS: world frames, origin/normal/point constructors, validity, point evaluation, nested encoding, and returned-copy rotation |
 | P02 Circle value-object slice | PASS: constructors, evaluation, bounds, closest point/parameter, plane membership, mutation, and conformal/nonuniform transform behavior |
 | P02 Sphere value-object slice | PASS: spherical evaluation, normals, poles, closest parameters/points, and latitude/longitude circle construction |
+| P02 Arc value-object slice | PASS: angle-domain evaluation, bounds, closest queries, trimming, reversal, and conformal/nonuniform transform behavior |
 | Paired `foundation-point4d-v1` Python/Rust conformance | PASS with exact numeric comparison; covers Point4d construction, four mutable coordinates, equality, and encoding |
 | Paired `geometry-line-v1` Python/Rust conformance | PASS with `atol=rtol=1e-12`; covers mutable endpoints, direction/length/tangent/validity, extrapolating `PointAt`, degenerate behavior, and in-place transform |
 | Overload-aware operation ledger generation | PASS: 3,229 obligations, 122 paired-case-backed `passing` mappings, 1,044 unassessed and 2,063 runtime/stub divergences |
